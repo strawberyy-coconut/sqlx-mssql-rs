@@ -184,9 +184,10 @@ cargo install --git https://github.com/strawberyy-coconut/sqlx-mssql-rs.git \
   sqlx-mssql-rs-cli --locked
 ```
 
-`--locked` builds against the committed `Cargo.lock`, so the `mssql-tds` revision
-used at release time is reproduced exactly. Add `--branch`, `--tag` or `--rev`
-to install from somewhere other than the default branch.
+`--locked` builds against the committed `Cargo.lock`, so dependency versions —
+including the pinned `mssql-tds` git revision — are reproduced exactly. Add
+`--branch`, `--tag` or `--rev` to install from somewhere other than the default
+branch.
 
 This installs two binaries:
 
@@ -194,12 +195,6 @@ This installs two binaries:
 - `cargo-sqlx-mssql` — the same tool as a cargo subcommand
 
 After installation, both are available on your `PATH`.
-
-From a local checkout, install the same way with a path instead:
-
-```bash
-cargo install --path sqlx-mssql-rs-cli --locked
-```
 
 ### Usage
 
@@ -248,6 +243,9 @@ sqlx-mssql migrate run --database-url mssql://sa:Password1!@127.0.0.1:1433/my_da
 ```
 
 ### Run without installing
+
+From a clone of this repository, the CLI can be run straight from source instead
+of being installed:
 
 ```bash
 cargo run -p sqlx-mssql-rs-cli -- migrate run
