@@ -1,0 +1,35 @@
+{
+  "db_name": "MSSQL",
+  "query": "SELECT COUNT(*) FROM users WHERE description = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "",
+        "type_info": {
+          "type_name": "int",
+          "sql_data_type": 38,
+          "length": 4,
+          "precision": 10,
+          "scale": 0
+        },
+        "nullable": true
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "type_name": "nvarchar",
+          "sql_data_type": 231,
+          "length": 65535,
+          "precision": null,
+          "scale": null
+        }
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "dbab1934aee7b3a0e62cda7c7eb5bee7c8302539df46e378c5514b7e746840fb"
+}

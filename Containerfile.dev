@@ -1,0 +1,10 @@
+FROM docker.io/rust:latest
+
+RUN rustup component add rustfmt clippy
+
+
+RUN apt-get update \
+    && apt-get install -y libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+#cargo install --path sqlx-mssql-rs-cli/

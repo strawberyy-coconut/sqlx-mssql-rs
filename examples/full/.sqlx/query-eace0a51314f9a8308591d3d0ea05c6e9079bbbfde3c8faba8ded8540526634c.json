@@ -1,0 +1,35 @@
+{
+  "db_name": "MSSQL",
+  "query": "SELECT description FROM users WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "description",
+        "type_info": {
+          "type_name": "nvarchar(max)",
+          "sql_data_type": 231,
+          "length": 65535,
+          "precision": 0,
+          "scale": 0
+        },
+        "nullable": true
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "type_name": "uniqueidentifier",
+          "sql_data_type": 36,
+          "length": 16,
+          "precision": null,
+          "scale": null
+        }
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "eace0a51314f9a8308591d3d0ea05c6e9079bbbfde3c8faba8ded8540526634c"
+}

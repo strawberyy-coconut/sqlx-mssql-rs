@@ -1,0 +1,27 @@
+{
+  "db_name": "MSSQL",
+  "query": "SELECT description FROM users",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "description",
+        "type_info": {
+          "type_name": "nvarchar(max)",
+          "sql_data_type": 231,
+          "length": 65535,
+          "precision": 0,
+          "scale": 0
+        },
+        "nullable": true
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "701b286b620a0cb1b26b9c937f677a8499971e3ebb599334743ed027e84d1661"
+}

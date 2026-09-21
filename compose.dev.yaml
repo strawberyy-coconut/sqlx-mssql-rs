@@ -1,0 +1,20 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Containerfile.dev
+    env_file:
+      - .dev.env
+    depends_on:
+      - db
+    environment:
+      MSSQL_DATABASE_URL: "mssql://sa:Password1!@db:1433/testdb?trust_certificate=true"
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Password1!"
+      MSSQL_PID: Developer
+    ports:
+      - "1434:1433"

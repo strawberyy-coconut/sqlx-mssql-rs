@@ -1,0 +1,27 @@
+{
+  "db_name": "MSSQL",
+  "query": "SELECT COUNT(*) FROM users",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "",
+        "type_info": {
+          "type_name": "int",
+          "sql_data_type": 38,
+          "length": 4,
+          "precision": 10,
+          "scale": 0
+        },
+        "nullable": true
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "dc64e1d25d9ced3a49130cee99f6edc3f70a4917910cf3b76faefc24ac32159d"
+}

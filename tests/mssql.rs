@@ -1,0 +1,565 @@
+//! Integration tests for the MSSQL driver.
+//!
+//! These run against a live SQL Server. `DATABASE_URL` selects it:
+//!
+//! ```text
+//! mssql://sa:Password1!@localhost:1433/master?trust_certificate=true
+//! ```
+//!
+//! Tables are created with unique names and dropped again, so the suite can be
+//! run against a shared server.
+
+// The generated type-checking impls and query builder types are deeply nested.
+#![recursion_limit = "512"]
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use futures_util::StreamExt;
+use sqlx_core::column::Column;
+use sqlx_core::connection::Connection;
+use sqlx_core::executor::Executor;
+use sqlx_core::query::query;
+use sqlx_core::query_scalar::query_scalar;
+use sqlx_core::row::Row;
+use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
+use sqlx_core::statement::Statement;
+use sqlx_core::Either;
+
+use sqlx_mssql_rs::{MssqlConnection, MssqlPool};
+
+fn database_url() -> String {
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "mssql://sa:Password1!@localhost:1433/master?trust_certificate=true".to_owned()
+    })
+}
+
+async fn get_test_conn() -> MssqlConnection {
+    MssqlConnection::connect(&database_url())
+        .await
+        .expect("failed to connect to SQL Server")
+}
+
+/// Marks dynamically built SQL as reviewed.
+///
+/// SQLx requires an explicit opt-in for non-literal SQL so that string
+/// interpolation is a deliberate choice. The only interpolated values in this
+/// file are locally generated table names.
+fn dynamic(sql: impl Into<String>) -> AssertSqlSafe<String> {
+    AssertSqlSafe(sql.into())
+}
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Builds a table name that cannot collide with another test run.
+fn test_table_name(prefix: &str) -> String {
+    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{prefix}_{}_{}", std::process::id(), id)
+}
+
+async fn create_table(conn: &mut MssqlConnection, name: &str, definition: &str) {
+    conn.execute(dynamic(format!("CREATE TABLE [{name}] ({definition})")))
+        .await
+        .expect("failed to create test table");
+}
+
+async fn drop_table(conn: &mut MssqlConnection, name: &str) {
+    let _ = conn
+        .execute(dynamic(format!("DROP TABLE IF EXISTS [{name}]")))
+        .await;
+}
+
+#[tokio::test]
+async fn pool_acquires_and_queries() {
+    let pool = MssqlPool::connect(&database_url())
+        .await
+        .expect("failed to create pool");
+
+    let value: i32 = query_scalar("SELECT 1")
+        .fetch_one(&pool)
+        .await
+        .expect("query failed");
+    assert_eq!(value, 1);
+
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn fetches_basic_row_and_reads_columns_by_name() {
+    let mut conn = get_test_conn().await;
+
+    let row = query("SELECT 1 AS one, N'hello' AS greeting")
+        .fetch_one(&mut conn)
+        .await
+        .expect("query failed");
+
+    assert_eq!(row.try_get::<i32, _>("one").unwrap(), 1);
+    // Column lookup is case-insensitive.
+    assert_eq!(row.try_get::<String, _>("GREETING").unwrap(), "hello");
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn streams_multiple_rows() {
+    let mut conn = get_test_conn().await;
+
+    let rows = query("SELECT value FROM (VALUES (1), (2), (3)) AS t(value)")
+        .fetch_all(&mut conn)
+        .await
+        .expect("query failed");
+
+    assert_eq!(rows.len(), 3);
+    let values: Vec<i32> = rows
+        .iter()
+        .map(|row| row.try_get::<i32, _>(0).unwrap())
+        .collect();
+    assert_eq!(values, vec![1, 2, 3]);
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn fetch_many_emits_rows_then_a_query_result() {
+    let mut conn = get_test_conn().await;
+
+    let mut rows = 0;
+    let mut results = 0;
+
+    {
+        let mut stream = (&mut conn).fetch_many(query("SELECT 1 AS v, 2 AS w"));
+
+        while let Some(item) = stream.next().await {
+            match item.expect("stream failed") {
+                Either::Right(_) => rows += 1,
+                Either::Left(_) => results += 1,
+            }
+        }
+    }
+
+    assert_eq!(rows, 1, "expected one row");
+    assert_eq!(results, 1, "expected one query result");
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn fetch_optional_returns_none_for_empty_result() {
+    let mut conn = get_test_conn().await;
+
+    let row = query("SELECT 1 AS v WHERE 1 = 0")
+        .fetch_optional(&mut conn)
+        .await
+        .expect("query failed");
+
+    assert!(row.is_none());
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn binds_positional_parameters() {
+    let mut conn = get_test_conn().await;
+
+    let value: i32 = query_scalar("SELECT ?")
+        .bind(42i32)
+        .fetch_one(&mut conn)
+        .await
+        .expect("query failed");
+    assert_eq!(value, 42);
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn binds_heterogeneous_and_null_parameters() {
+    let mut conn = get_test_conn().await;
+
+    let text: String = query_scalar("SELECT ?")
+        .bind("hello".to_string())
+        .fetch_one(&mut conn)
+        .await
+        .expect("text bind failed");
+    assert_eq!(text, "hello");
+
+    let flag: bool = query_scalar("SELECT ?")
+        .bind(true)
+        .fetch_one(&mut conn)
+        .await
+        .expect("bool bind failed");
+    assert!(flag);
+
+    let number: f64 = query_scalar("SELECT ?")
+        .bind(1.5f64)
+        .fetch_one(&mut conn)
+        .await
+        .expect("float bind failed");
+    assert_eq!(number, 1.5);
+
+    let nothing: Option<i32> = query_scalar("SELECT ?")
+        .bind(Option::<i32>::None)
+        .fetch_one(&mut conn)
+        .await
+        .expect("null bind failed");
+    assert!(nothing.is_none());
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn execute_reports_rows_affected() {
+    let mut conn = get_test_conn().await;
+    let table = test_table_name("rows_affected");
+
+    create_table(&mut conn, &table, "id INT").await;
+
+    let result = conn
+        .execute(dynamic(format!(
+            "INSERT INTO [{table}] (id) VALUES (1), (2), (3)"
+        )))
+        .await
+        .expect("insert failed");
+    assert_eq!(result.rows_affected(), 3);
+
+    drop_table(&mut conn, &table).await;
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn transaction_commit_persists_and_rollback_discards() {
+    let mut conn = get_test_conn().await;
+    let table = test_table_name("txn");
+
+    create_table(&mut conn, &table, "id INT").await;
+
+    // Commit.
+    let mut tx = conn.begin().await.expect("begin failed");
+    query(dynamic(format!("INSERT INTO [{table}] (id) VALUES (10)")))
+        .execute(&mut *tx)
+        .await
+        .expect("insert failed");
+    tx.commit().await.expect("commit failed");
+
+    let count: i32 = query_scalar(dynamic(format!("SELECT COUNT(*) FROM [{table}]")))
+        .fetch_one(&mut conn)
+        .await
+        .expect("count failed");
+    assert_eq!(count, 1, "committed row should be visible");
+
+    // Roll back.
+    let mut tx = conn.begin().await.expect("begin failed");
+    query(dynamic(format!("INSERT INTO [{table}] (id) VALUES (20)")))
+        .execute(&mut *tx)
+        .await
+        .expect("insert failed");
+    tx.rollback().await.expect("rollback failed");
+
+    let count: i32 = query_scalar(dynamic(format!("SELECT COUNT(*) FROM [{table}]")))
+        .fetch_one(&mut conn)
+        .await
+        .expect("count failed");
+    assert_eq!(count, 1, "rolled back row should not be visible");
+
+    drop_table(&mut conn, &table).await;
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn dropped_transaction_is_rolled_back() {
+    let mut conn = get_test_conn().await;
+    let table = test_table_name("dropped_txn");
+
+    create_table(&mut conn, &table, "id INT").await;
+
+    {
+        let mut tx = conn.begin().await.expect("begin failed");
+        query(dynamic(format!("INSERT INTO [{table}] (id) VALUES (30)")))
+            .execute(&mut *tx)
+            .await
+            .expect("insert failed");
+        // `tx` is dropped here without committing.
+    }
+
+    // The rollback is issued lazily, so this query also proves it happened.
+    let count: i32 = query_scalar(dynamic(format!("SELECT COUNT(*) FROM [{table}]")))
+        .fetch_one(&mut conn)
+        .await
+        .expect("count failed");
+    assert_eq!(count, 0, "abandoned transaction should have rolled back");
+
+    drop_table(&mut conn, &table).await;
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn prepare_reports_column_metadata() {
+    let mut conn = get_test_conn().await;
+
+    let statement = conn
+        .prepare(AssertSqlSafe("SELECT 1 AS one, N'x' AS two").into_sql_str())
+        .await
+        .expect("prepare failed");
+
+    let columns = statement.columns();
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name(), "one");
+    assert_eq!(columns[1].name(), "two");
+
+    conn.close().await.unwrap();
+}
+
+/// Parameter types reach sqlx when they resolve to exactly one Rust type, and
+/// fall back to a count when they do not.
+#[tokio::test]
+async fn prepare_reports_parameter_types_when_they_are_unambiguous() {
+    let mut conn = get_test_conn().await;
+    let table = test_table_name("param_types");
+
+    create_table(
+        &mut conn,
+        &table,
+        "id INT, name NVARCHAR(50), amount DECIMAL(18,2)",
+    )
+    .await;
+
+    // Integer and character parameters have a single possible Rust type.
+    let statement = conn
+        .prepare(
+            dynamic(format!(
+                "SELECT id FROM [{table}] WHERE name = ? AND id = ?"
+            ))
+            .into_sql_str(),
+        )
+        .await
+        .expect("prepare failed");
+
+    match statement.parameters() {
+        Some(Either::Left(types)) => {
+            assert_eq!(types.len(), 2, "one entry per parameter marker");
+            assert_eq!(types[0].type_name(), "nvarchar");
+            assert_eq!(types[1].type_name(), "int");
+        }
+        other => panic!("expected per-parameter types, got {other:?}"),
+    }
+
+    // `i8` accepts any numeric type, so a decimal would be reported as `i8` and
+    // then reject a correctly bound argument. A count is the safe answer.
+    let statement = conn
+        .prepare(dynamic(format!("SELECT id FROM [{table}] WHERE amount > ?")).into_sql_str())
+        .await
+        .expect("prepare failed");
+
+    match statement.parameters() {
+        Some(Either::Right(count)) => assert_eq!(count, 1),
+        other => panic!("expected a parameter count for decimal, got {other:?}"),
+    }
+
+    drop_table(&mut conn, &table).await;
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_query_is_reported_as_a_database_error() {
+    let mut conn = get_test_conn().await;
+
+    let error = query("SELECT * FROM nope_this_table_does_not_exist")
+        .fetch_all(&mut conn)
+        .await
+        .expect_err("query should have failed");
+
+    assert!(
+        error.as_database_error().is_some(),
+        "expected a database error, got {error:?}"
+    );
+    let database_error = error
+        .as_database_error()
+        .expect("expected a database error");
+    assert_eq!(
+        database_error.code().as_deref(),
+        Some("208"),
+        "invalid object name should surface SQL Server error 208"
+    );
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn wrong_parameter_count_errors() {
+    let mut conn = get_test_conn().await;
+
+    // The result type is annotated because the value itself is never used.
+    let result: Result<i32, _> = query_scalar("SELECT ?, ?")
+        .bind(1i32)
+        .fetch_one(&mut conn)
+        .await;
+    let error = result.expect_err("mismatched parameter count should fail");
+
+    assert!(
+        error.to_string().contains("parameter marker"),
+        "expected a parameter mismatch error, got {error:?}"
+    );
+
+    conn.close().await.unwrap();
+}
+
+/// Dropping a row stream early leaves the result set half-read; the connection
+/// must recover rather than become unusable.
+#[tokio::test]
+async fn early_dropped_stream_leaves_connection_usable() {
+    let mut conn = get_test_conn().await;
+    let table = test_table_name("dropped_stream");
+
+    create_table(&mut conn, &table, "id INT").await;
+    let sql = format!("INSERT INTO [{table}] (id) VALUES (1), (2), (3)");
+    conn.execute(dynamic(sql.clone())).await.expect("insert failed");
+
+    {
+        let mut stream =
+            (&mut conn).fetch_many(query(dynamic(format!("SELECT id FROM [{table}]"))));
+        // Read exactly one row, then drop the stream.
+        let _ = stream.next().await;
+    }
+
+    let value: i32 = query_scalar("SELECT 1")
+        .fetch_one(&mut conn)
+        .await
+        .expect("connection should still be usable");
+    assert_eq!(value, 1);
+
+    drop_table(&mut conn, &table).await;
+    conn.close().await.unwrap();
+}
+
+/// Temporal values need their type integration enabled.
+#[cfg(feature = "chrono")]
+#[tokio::test]
+async fn binds_temporal_parameters() {
+    use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
+
+    let mut conn = get_test_conn().await;
+
+    let naive: NaiveDateTime = NaiveDate::from_ymd_opt(2026, 9, 21)
+        .unwrap()
+        .and_hms_opt(12, 34, 56)
+        .unwrap();
+
+    let echoed: NaiveDateTime = query_scalar("SELECT ?")
+        .bind(naive)
+        .fetch_one(&mut conn)
+        .await
+        .expect("datetime2 bind failed");
+    assert_eq!(echoed, naive);
+
+    // A server-generated value guards against a symmetric encode/decode error.
+    let literal: NaiveDateTime = query_scalar("SELECT CAST('2026-09-21T12:34:56' AS datetime2)")
+        .fetch_one(&mut conn)
+        .await
+        .expect("literal decode failed");
+    assert_eq!(literal, naive);
+
+    let offset = Utc.with_ymd_and_hms(2026, 9, 21, 12, 34, 56).unwrap();
+
+    let echoed: chrono::DateTime<Utc> = query_scalar("SELECT ?")
+        .bind(offset)
+        .fetch_one(&mut conn)
+        .await
+        .expect("datetimeoffset bind failed");
+    assert_eq!(echoed, offset);
+
+    conn.close().await.unwrap();
+}
+
+/// Captures `log` records so the statement-logging path can be asserted on.
+struct CaptureLogger;
+
+static CAPTURED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static LOGGER: CaptureLogger = CaptureLogger;
+
+impl log::Log for CaptureLogger {
+    fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if let Ok(mut captured) = CAPTURED.lock() {
+            captured.push(record.args().to_string());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+/// The sqlx `ConnectOptions` logging methods must actually log; they are easy to
+/// accept and silently ignore.
+#[tokio::test]
+async fn statement_logging_emits_the_query() {
+    // One logger per process; a second call is harmless.
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Debug);
+
+    let mut conn = get_test_conn().await;
+
+    let marker = "logged_statement_marker";
+    let _ = query(dynamic(format!("SELECT 1 AS {marker}")))
+        .fetch_all(&mut conn)
+        .await;
+
+    let captured: Vec<String> = CAPTURED
+        .lock()
+        .expect("log capture mutex poisoned")
+        .clone();
+    assert!(
+        captured.iter().any(|line| line.contains(marker)),
+        "expected the statement to be logged, captured {captured:?}"
+    );
+
+    conn.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn migrations_apply_and_revert() {
+    use sqlx_core::migrate::{Migrate, Migrator};
+
+    let mut conn = get_test_conn().await;
+
+    let _ = conn.execute("DROP TABLE IF EXISTS test_items").await;
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS [test_sqlx_migrations]")
+        .await;
+
+    let mut migrator = Migrator::new(std::path::Path::new("./tests/migrations"))
+        .await
+        .expect("failed to load migrations");
+    // A private table keeps this test from disturbing anything else that shares
+    // the database, such as the example's own migration state.
+    migrator.table_name = std::borrow::Cow::Borrowed("test_sqlx_migrations");
+
+    migrator.run(&mut conn).await.expect("migration failed");
+
+    // The bookkeeping row must be visible, otherwise a second run re-applies.
+    let applied = conn
+        .list_applied_migrations("test_sqlx_migrations")
+        .await
+        .expect("list_applied_migrations failed");
+    assert_eq!(
+        applied.len(),
+        1,
+        "list_applied_migrations should report the applied migration"
+    );
+
+    let count: i32 = query_scalar("SELECT COUNT(*) FROM test_items")
+        .fetch_one(&mut conn)
+        .await
+        .expect("migrated table should be queryable");
+    assert_eq!(count, 0);
+
+    // Re-running is a no-op.
+    migrator.run(&mut conn).await.expect("second run failed");
+
+    // Leave no trace for a later run.
+    let _ = conn.execute("DROP TABLE IF EXISTS test_items").await;
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS [test_sqlx_migrations]")
+        .await;
+
+    conn.close().await.unwrap();
+}

@@ -1,0 +1,52 @@
+[package]
+name = "sqlx-mssql-rs"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "MSSQL driver for SQLx built on Microsoft's mssql-tds TDS implementation."
+readme = "README.md"
+keywords = ["sqlx", "mssql", "sql-server", "tds", "database"]
+categories = ["database"]
+rust-version = "1.96"
+documentation = "https://docs.rs/sqlx-mssql-rs"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[workspace]
+resolver = "2"
+members = ["examples/full", "sqlx-mssql-rs-cli", "sqlx-mssql-rs-core", "sqlx-mssql-rs-macros"]
+
+[features]
+default = ["macros", "derive", "migrate", "offline"]
+# Type features are forwarded to both core and macros.
+bigdecimal = ["sqlx-mssql-rs-core/bigdecimal", "sqlx-mssql-rs-macros?/bigdecimal"]
+chrono = ["sqlx-mssql-rs-core/chrono", "sqlx-mssql-rs-macros?/chrono"]
+time = ["sqlx-mssql-rs-core/time", "sqlx-mssql-rs-macros?/time"]
+decimal = ["sqlx-mssql-rs-core/decimal"]
+json = ["sqlx-mssql-rs-core/json", "sqlx-mssql-rs-macros?/json"]
+rust_decimal = ["sqlx-mssql-rs-core/rust_decimal", "sqlx-mssql-rs-macros?/rust_decimal"]
+uuid = ["sqlx-mssql-rs-core/uuid", "sqlx-mssql-rs-macros?/uuid"]
+spatial = ["sqlx-mssql-rs-core/spatial"]
+# Integration features.
+any = ["sqlx-mssql-rs-core/any"]
+migrate = ["sqlx-mssql-rs-core/migrate"]
+offline = ["sqlx-mssql-rs-core/offline"]
+# Opt-in Kerberos / NTLM authentication.
+integrated-auth = ["sqlx-mssql-rs-core/integrated-auth"]
+# Macro features.
+macros = ["sqlx-mssql-rs-macros"]
+derive = ["sqlx-mssql-rs-macros/derive"]
+
+[dependencies]
+sqlx-core = { version = "0.9.0", default-features = false }
+sqlx-mssql-rs-core = { version = "0.1.0", path = "./sqlx-mssql-rs-core", default-features = false }
+sqlx-mssql-rs-macros = { version = "0.1.0", path = "./sqlx-mssql-rs-macros", optional = true }
+
+[dev-dependencies]
+chrono = { version = "0.4.34", default-features = false, features = ["std", "clock"] }
+futures-util = "0.3.32"
+log = "0.4"
+tokio = { version = "1.25.0", features = ["macros", "rt", "rt-multi-thread"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["macros"] }
