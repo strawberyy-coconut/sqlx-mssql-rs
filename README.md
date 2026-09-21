@@ -9,13 +9,13 @@ to install, and no background thread bridging to a blocking API: the underlying
 client is fully asynchronous, so the driver is Tokio-only and adds nothing but
 crates.io dependencies.
 
-> **Status:** not published to crates.io yet. Depend on it via `path` or `git`.
+> **Status:** not published to crates.io yet. Depend on it from git (see below).
 
 ## Minimal Query
 
 ```toml
 [dependencies]
-sqlx-mssql-rs = { path = "../sqlx-mssql-rs" }
+sqlx-mssql-rs = { git = "https://github.com/strawberyy-coconut/sqlx-mssql-rs.git" }
 sqlx-core = { version = "0.9.0", default-features = false }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
@@ -150,6 +150,7 @@ compiler's limit:
 ```
 
 If the compiler reports "queries overflow the depth limit", this is the fix.
+
 ## Features
 
 | Feature | Default | Description |
@@ -179,8 +180,13 @@ migrations, and preparing offline query data.
 ### Install
 
 ```bash
-cargo install --path sqlx-mssql-rs-cli --locked
+cargo install --git https://github.com/strawberyy-coconut/sqlx-mssql-rs.git \
+  sqlx-mssql-rs-cli --locked
 ```
+
+`--locked` builds against the committed `Cargo.lock`, so the `mssql-tds` revision
+used at release time is reproduced exactly. Add `--branch`, `--tag` or `--rev`
+to install from somewhere other than the default branch.
 
 This installs two binaries:
 
@@ -188,6 +194,12 @@ This installs two binaries:
 - `cargo-sqlx-mssql` — the same tool as a cargo subcommand
 
 After installation, both are available on your `PATH`.
+
+From a local checkout, install the same way with a path instead:
+
+```bash
+cargo install --path sqlx-mssql-rs-cli --locked
+```
 
 ### Usage
 
