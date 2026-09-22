@@ -32,7 +32,7 @@ jiff = ["sqlx-mssql-rs-core/jiff", "sqlx-mssql-rs-macros?/jiff"]
 json = ["sqlx-mssql-rs-core/json", "sqlx-mssql-rs-macros?/json"]
 rust_decimal = ["sqlx-mssql-rs-core/rust_decimal", "sqlx-mssql-rs-macros?/rust_decimal"]
 uuid = ["sqlx-mssql-rs-core/uuid", "sqlx-mssql-rs-macros?/uuid"]
-spatial = ["sqlx-mssql-rs-core/spatial"]
+spatial = ["sqlx-mssql-rs-core/spatial", "sqlx-mssql-rs-macros?/spatial"]
 # Integration features.
 any = ["sqlx-mssql-rs-core/any"]
 migrate = ["sqlx-mssql-rs-core/migrate"]
@@ -53,6 +53,7 @@ sqlx-mssql-rs-macros = { version = "0.1.0", path = "./sqlx-mssql-rs-macros", opt
 [dev-dependencies]
 chrono = { version = "0.4.34", default-features = false, features = ["std", "clock"] }
 futures-util = "0.3.32"
+geo-types = "0.7"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 log = "0.4"
 time = "0.3"

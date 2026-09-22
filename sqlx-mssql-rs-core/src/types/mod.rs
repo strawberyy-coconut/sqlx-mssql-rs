@@ -10,7 +10,7 @@ mod chrono;
 #[cfg(any(feature = "decimal", feature = "rust_decimal"))]
 mod decimal;
 #[cfg(feature = "spatial")]
-mod geo;
+pub(crate) mod geo;
 #[cfg(feature = "jiff")]
 mod jiff;
 #[cfg(feature = "json")]

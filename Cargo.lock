@@ -2181,6 +2181,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "geo-types",
  "jiff",
  "log",
  "sqlx",

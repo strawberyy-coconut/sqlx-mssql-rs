@@ -82,9 +82,20 @@ fn null_sql_type(type_info: &MssqlTypeInfo) -> SqlType {
         Some(TdsDataType::BigChar | TdsDataType::BigVarChar | TdsDataType::VarChar) => {
             SqlType::VarcharMax(None)
         }
-        Some(TdsDataType::BigBinary | TdsDataType::Binary | TdsDataType::VarBinary) => {
-            SqlType::VarBinaryMax(None)
-        }
+        // `geometry`/`geography` are sent as their native serialization in a
+        // `varbinary` parameter, which SQL Server converts to the target column,
+        // so their typed `NULL` has to be declared `varbinary` too. `BigVarBinary`
+        // is the TDS type of `varbinary(max)`, the type every byte encoder here
+        // declares, and was previously falling through to the `nvarchar`
+        // fallback below.
+        Some(
+            TdsDataType::BigBinary
+            | TdsDataType::BigVarBinary
+            | TdsDataType::Binary
+            | TdsDataType::VarBinary
+            | TdsDataType::Image
+            | TdsDataType::Udt,
+        ) => SqlType::VarBinaryMax(None),
         Some(TdsDataType::Guid) => SqlType::Uuid(None),
         Some(TdsDataType::DateN) => SqlType::Date(None),
         Some(TdsDataType::TimeN) => SqlType::Time(None),
@@ -312,5 +323,29 @@ impl<'q> sqlx_core::encode::Encode<'q, Mssql> for &'q [u8] {
     ) -> Result<sqlx_core::encode::IsNull, sqlx_core::error::BoxDynError> {
         buf.push(MssqlArgumentValue::bytes((*self).to_vec()));
         Ok(sqlx_core::encode::IsNull::No)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_types_declare_a_varbinary_null() {
+        // `varbinary(max)` is TDS `BigVarBinary`, which is what every byte
+        // encoder here declares. A `NULL` of it must be declared `varbinary`
+        // too: declaring `nvarchar(max)` made SQL Server refuse the implicit
+        // conversion in positions like `STGeomFromWKB(@p, 0)`.
+        for info in [
+            MssqlTypeInfo::varbinary_max(),
+            MssqlTypeInfo::geometry(),
+            MssqlTypeInfo::geography(),
+        ] {
+            assert!(
+                matches!(null_sql_type(&info), SqlType::VarBinaryMax(None)),
+                "unexpected NULL declaration for {}",
+                info
+            );
+        }
     }
 }

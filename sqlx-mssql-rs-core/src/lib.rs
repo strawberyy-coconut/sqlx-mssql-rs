@@ -36,6 +36,13 @@
 #![warn(future_incompatible, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+// The query macros `stringify!` the Rust type names in `type_checking` and
+// splice them into the calling crate, where `crate::` would name the caller.
+// Referring to this driver by the name its facade is imported under makes the
+// same token stream resolve both here and there.
+#[cfg(feature = "spatial")]
+extern crate self as sqlx_mssql_rs;
+
 #[cfg(feature = "any")]
 #[cfg_attr(docsrs, doc(cfg(feature = "any")))]
 #[doc(hidden)]
@@ -76,6 +83,9 @@ pub use row::MssqlRow;
 pub use statement::MssqlStatement;
 pub use transaction::MssqlTransactionManager;
 pub use type_info::MssqlTypeInfo;
+#[cfg(feature = "spatial")]
+#[cfg_attr(docsrs, doc(cfg(feature = "spatial")))]
+pub use types::geo::{MssqlGeography, MssqlGeometry};
 pub use value::{MssqlValue, MssqlValueRef};
 
 /// An alias for [`Pool`][sqlx_core::pool::Pool], specialized for MSSQL.

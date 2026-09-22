@@ -14,6 +14,11 @@ sqlx_core::impl_type_checking!(
         Vec<u8> | &[u8],
 
         #[cfg(feature = "spatial")]
+        sqlx_mssql_rs::MssqlGeometry,
+        #[cfg(feature = "spatial")]
+        sqlx_mssql_rs::MssqlGeography,
+
+        #[cfg(feature = "spatial")]
         geo_types::Geometry<f64>,
 
         #[cfg(feature = "uuid")]

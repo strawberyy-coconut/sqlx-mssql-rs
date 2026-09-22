@@ -15,6 +15,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::StreamExt;
+use sqlx_core::Either;
 use sqlx_core::column::Column;
 use sqlx_core::connection::Connection;
 use sqlx_core::executor::Executor;
@@ -23,7 +24,6 @@ use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::row::Row;
 use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::statement::Statement;
-use sqlx_core::Either;
 
 use sqlx_mssql_rs::{MssqlConnectOptions, MssqlConnection, MssqlEncryption, MssqlPool};
 
@@ -381,6 +381,46 @@ async fn prepare_reports_parameter_types_when_they_are_unambiguous() {
     conn.close().await.unwrap();
 }
 
+/// Integer columns must resolve to the Rust type of matching width rather than
+/// to the first `compatible` entry. `sp_describe_first_result_set` reports a
+/// precision and scale for every numeric type, which used to break the exact
+/// match and make `bigint` infer as `i8`.
+#[tokio::test]
+async fn integer_columns_infer_as_their_own_type() {
+    use sqlx_core::config::macros::PreferredCrates;
+    use sqlx_core::type_checking::TypeChecking;
+
+    let mut conn = get_test_conn().await;
+
+    let statement = conn
+        .prepare(
+            AssertSqlSafe(
+                "SELECT CAST(1 AS tinyint) AS t, CAST(1 AS smallint) AS s, \
+                 CAST(1 AS int) AS i, CAST(1 AS bigint) AS b",
+            )
+            .into_sql_str(),
+        )
+        .await
+        .expect("prepare failed");
+
+    let preferred = PreferredCrates::default();
+    let inferred: Vec<&str> = statement
+        .columns()
+        .iter()
+        .map(|column| {
+            <sqlx_mssql_rs::Mssql as TypeChecking>::return_type_for_id(
+                column.type_info(),
+                &preferred,
+            )
+            .expect("every integer column should map to a Rust type")
+        })
+        .collect();
+
+    assert_eq!(inferred, vec!["i8", "i16", "i32", "i64"]);
+
+    conn.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn invalid_query_is_reported_as_a_database_error() {
     let mut conn = get_test_conn().await;
@@ -434,7 +474,9 @@ async fn early_dropped_stream_leaves_connection_usable() {
 
     create_table(&mut conn, &table, "id INT").await;
     let sql = format!("INSERT INTO [{table}] (id) VALUES (1), (2), (3)");
-    conn.execute(dynamic(sql.clone())).await.expect("insert failed");
+    conn.execute(dynamic(sql.clone()))
+        .await
+        .expect("insert failed");
 
     {
         let mut stream =
@@ -586,9 +628,9 @@ async fn connects_with_required_encryption() {
 #[cfg(feature = "jiff")]
 #[tokio::test]
 async fn binds_jiff_temporal_parameters() {
+    use jiff::Timestamp;
     use jiff::civil::{Date, DateTime, Time};
     use jiff::tz::TimeZone;
-    use jiff::Timestamp;
 
     let mut conn = get_test_conn().await;
 
@@ -684,10 +726,7 @@ async fn statement_logging_emits_the_query() {
         .fetch_all(&mut conn)
         .await;
 
-    let captured: Vec<String> = CAPTURED
-        .lock()
-        .expect("log capture mutex poisoned")
-        .clone();
+    let captured: Vec<String> = CAPTURED.lock().expect("log capture mutex poisoned").clone();
     assert!(
         captured.iter().any(|line| line.contains(marker)),
         "expected the statement to be logged, captured {captured:?}"
@@ -743,4 +782,170 @@ async fn migrations_apply_and_revert() {
         .await;
 
     conn.close().await.unwrap();
+}
+
+/// SQL Server's `geometry` and `geography` are UDTs whose payload is the
+/// server's native serialization, not WKB. These tests run only with the
+/// `spatial` feature, which supplies the `geo-types` based wrappers.
+#[cfg(feature = "spatial")]
+mod spatial {
+    use super::*;
+    use geo_types::{Geometry, Point};
+
+    use sqlx_mssql_rs::{MssqlGeography, MssqlGeometry};
+
+    #[tokio::test]
+    async fn spatial_columns_round_trip_natively() {
+        let mut conn = get_test_conn().await;
+        let table = test_table_name("spatial");
+        create_table(&mut conn, &table, "id INT, g GEOMETRY, p GEOGRAPHY").await;
+
+        let geometry = Geometry::Point(Point::new(1.0, 2.0));
+
+        let result = query(dynamic(format!(
+            "INSERT INTO [{table}] (id, g, p) VALUES (?, ?, ?)"
+        )))
+        .bind(1i32)
+        .bind(MssqlGeometry::new(geometry.clone(), 4326))
+        .bind(MssqlGeography::new(geometry.clone(), 4326))
+        .execute(&mut conn)
+        .await;
+        result.expect("inserting native spatial values should succeed");
+
+        let row = query(dynamic(format!("SELECT g, p FROM [{table}] WHERE id = 1")))
+            .fetch_one(&mut conn)
+            .await
+            .expect("select failed");
+
+        let stored: MssqlGeometry = row.try_get(0).expect("decode geometry column");
+        assert_eq!(stored.srid(), 4326, "the geometry SRID should survive");
+        assert_eq!(stored.geometry(), &geometry);
+
+        let stored: MssqlGeography = row.try_get(1).expect("decode geography column");
+        assert_eq!(stored.srid(), 4326, "the geography SRID should survive");
+        assert_eq!(stored.geometry(), &geometry);
+
+        drop_table(&mut conn, &table).await;
+        conn.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_geometry_column_is_not_read_as_wkb() {
+        let mut conn = get_test_conn().await;
+
+        let row = query("SELECT geometry::Point(1, 2, 4326) AS g")
+            .fetch_one(&mut conn)
+            .await
+            .expect("query failed");
+
+        // Before the fix this silently produced a wrong point, because byte 0
+        // of the SRID was accepted as a big-endian WKB marker. sqlx rejects it
+        // at the type check, and `Decode` rejects it again independently.
+        let error = row
+            .try_get::<Geometry<f64>, _>(0)
+            .expect_err("a UDT payload must not be decoded as WKB");
+        assert!(
+            error.to_string().contains("geometry"),
+            "unexpected error: {error}"
+        );
+
+        // The WKB projection in a `varbinary` column still decodes.
+        let row = query("SELECT geometry::Point(1, 2, 4326).STAsBinary() AS w")
+            .fetch_one(&mut conn)
+            .await
+            .expect("query failed");
+        let wkb: Geometry<f64> = row.try_get(0).expect("decode WKB");
+        assert_eq!(wkb, Geometry::Point(Point::new(1.0, 2.0)));
+
+        conn.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_null_wkb_parameter_is_declared_varbinary() {
+        let mut conn = get_test_conn().await;
+
+        // A typed NULL for `Geometry<f64>` reports `varbinary(max)`, whose TDS
+        // type is `BigVarBinary`. It used to fall through to the `nvarchar(max)`
+        // default, which SQL Server refuses to convert to `varbinary` in
+        // `STGeomFromWKB(@p, 0)`.
+        let value: Option<Geometry<f64>> = query_scalar("SELECT geometry::STGeomFromWKB(?, 0)")
+            .bind(None::<Geometry<f64>>)
+            .fetch_one(&mut conn)
+            .await
+            .expect("a NULL geometry parameter should be accepted");
+        assert!(value.is_none());
+
+        // The spatial wrapper's own typed NULL is declared the same way, so it
+        // can be inserted straight into a `geometry` column.
+        let table = test_table_name("spatial_null");
+        create_table(&mut conn, &table, "g GEOMETRY").await;
+        query(dynamic(format!("INSERT INTO [{table}] (g) VALUES (?)")))
+            .bind(None::<MssqlGeometry>)
+            .execute(&mut conn)
+            .await
+            .expect("a NULL geometry should insert");
+        let count: i32 = query_scalar(dynamic(format!("SELECT COUNT(*) FROM [{table}]")))
+            .fetch_one(&mut conn)
+            .await
+            .expect("count failed");
+        assert_eq!(count, 1);
+        drop_table(&mut conn, &table).await;
+
+        conn.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prepare_reports_spatial_types_by_name() {
+        let mut conn = get_test_conn().await;
+        let table = test_table_name("spatial_meta");
+        create_table(&mut conn, &table, "id INT, g GEOMETRY").await;
+
+        // A parameter bound to a spatial column resolves to the wrapper type,
+        // which is what makes the query macros accept a bound geometry.
+        let statement = conn
+            .prepare(dynamic(format!("INSERT INTO [{table}] (id, g) VALUES (?, ?)")).into_sql_str())
+            .await
+            .expect("prepare failed");
+        match statement.parameters() {
+            Some(Either::Left(types)) => {
+                assert_eq!(types.len(), 2, "one entry per parameter marker");
+                assert!(
+                    types[1].is_geometry(),
+                    "expected a geometry parameter, got {}",
+                    types[1]
+                );
+            }
+            other => panic!("expected a geometry parameter type, got {other:?}"),
+        }
+
+        // The column reports `geometry` rather than the generic `udt` name.
+        let statement = conn
+            .prepare(dynamic(format!("SELECT g FROM [{table}]")).into_sql_str())
+            .await
+            .expect("prepare failed");
+        assert_eq!(statement.columns()[0].type_info().type_name(), "geometry");
+
+        drop_table(&mut conn, &table).await;
+        conn.close().await.unwrap();
+    }
+
+    /// The query macros splice the Rust type path from the driver's
+    /// type-checking table straight into the caller, so `MssqlGeometry` has to
+    /// resolve here without the driver crate's own `crate::` prefix.
+    #[tokio::test]
+    async fn query_macro_resolves_spatial_types() {
+        let mut conn = get_test_conn().await;
+
+        let value: Option<MssqlGeometry> =
+            sqlx_mssql_rs::query_scalar!("SELECT geometry::Point(1, 2, 4326) AS g")
+                .fetch_one(&mut conn)
+                .await
+                .expect("macro query failed");
+        let value = value.expect("the point is not NULL");
+
+        assert_eq!(value.srid(), 4326);
+        assert_eq!(value.geometry(), &Geometry::Point(Point::new(1.0, 2.0)));
+
+        conn.close().await.unwrap();
+    }
 }

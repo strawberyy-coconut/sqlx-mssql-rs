@@ -39,8 +39,17 @@
 //! | `sqlx-toml` | no | `sqlx.toml` type overrides and preferred crates |
 //! | `uuid`, `chrono`, `time`, `jiff`, `json`, `bstr` | no | Type integrations |
 //! | `bigdecimal`, `rust_decimal`, `decimal` | no | Exact numeric integrations |
-//! | `spatial` | no | `geo-types` geometry support |
+//! | `spatial` | no | SQL Server `geometry` / `geography` support via `geo-types` |
 //! | `integrated-auth` | no | Kerberos / NTLM authentication |
+//!
+//! # Spatial types
+//!
+//! SQL Server's `geometry` and `geography` are CLR UDTs whose payload is the
+//! server's own serialization, not WKB. With the `spatial` feature they map to
+//! `MssqlGeometry` and `MssqlGeography`, which keep the SRID that
+//! `geo_types::Geometry` cannot carry. `geo_types::Geometry<f64>` itself maps to
+//! WKB held in a `varbinary` column; select `.STAsBinary()` to read a spatial
+//! value that way.
 //!
 //! # Authentication
 //!

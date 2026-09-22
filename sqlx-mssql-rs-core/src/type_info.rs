@@ -40,6 +40,23 @@ impl MssqlTypeInfo {
     pub(crate) fn from_column_metadata(column: &ColumnMetadata) -> Self {
         let data_type = column.data_type;
 
+        // A CLR UDT carries its own name in the metadata, which is the only way
+        // to tell `geometry` and `geography` apart from any other UDT. Their
+        // payload is the server's native serialization, not WKB, so the name
+        // has to survive into `type_info()` for the spatial mappings to work.
+        if data_type == TdsDataType::Udt
+            && let Some(udt) = column.type_info.udt_info()
+        {
+            let mut info = match udt.type_name().to_ascii_lowercase().as_str() {
+                "geometry" => Self::geometry(),
+                "geography" => Self::geography(),
+                other => Self::new(other, TdsDataType::Udt as u8, 0, None, None),
+            };
+
+            info.length = u32::from(udt.max_byte_size());
+            return info;
+        }
+
         Self {
             type_name: data_type_name(data_type),
             sql_data_type: data_type as u8,
@@ -74,6 +91,42 @@ impl MssqlTypeInfo {
         TdsDataType::try_from(self.sql_data_type).ok()
     }
 
+    /// Overlays precision and scale reported alongside a type, keeping them only
+    /// when the type actually carries them.
+    ///
+    /// `sp_describe_first_result_set` fills both for every numeric type, but the
+    /// constructors only carry them where they are meaningful. A described
+    /// integer, for example, would otherwise not compare equal to
+    /// [`Self::bigint`] and the query macros would fall back to the first
+    /// `compatible` entry.
+    pub(crate) fn with_precision_scale(
+        mut self,
+        precision: Option<u8>,
+        scale: Option<u8>,
+    ) -> Self {
+        if reports_precision(self.sql_data_type) {
+            self.precision = precision.or(self.precision);
+        }
+        if reports_scale(self.sql_data_type) {
+            self.scale = scale.or(self.scale);
+        }
+        self
+    }
+
+    /// Whether this type is SQL Server's `geometry` UDT.
+    ///
+    /// The payload of a `geometry` column is the server's native serialization,
+    /// not WKB, so it must not be treated as binary data.
+    pub fn is_geometry(&self) -> bool {
+        self.data_type() == Some(TdsDataType::Udt) && self.type_name.eq_ignore_ascii_case("geometry")
+    }
+
+    /// Whether this type is SQL Server's `geography` UDT.
+    pub fn is_geography(&self) -> bool {
+        self.data_type() == Some(TdsDataType::Udt)
+            && self.type_name.eq_ignore_ascii_case("geography")
+    }
+
     /// Whether values of this type are character data.
     pub fn accepts_character_data(&self) -> bool {
         matches!(
@@ -94,6 +147,10 @@ impl MssqlTypeInfo {
     }
 
     /// Whether values of this type are binary data.
+    ///
+    /// This deliberately excludes [`TdsDataType::Udt`]: a CLR UDT's payload is
+    /// opaque to the driver and, for `geometry`/`geography`, is not WKB, so it
+    /// must not be claimed by `Vec<u8>` or the WKB `Geometry<f64>` mapping.
     pub fn accepts_binary_data(&self) -> bool {
         matches!(
             self.data_type(),
@@ -103,7 +160,6 @@ impl MssqlTypeInfo {
                     | TdsDataType::Binary
                     | TdsDataType::VarBinary
                     | TdsDataType::Image
-                    | TdsDataType::Udt
                     | TdsDataType::Vector
             )
         )
@@ -207,6 +263,16 @@ impl MssqlTypeInfo {
         Self::new("varbinary", TdsDataType::BigVarBinary as u8, 0, None, None)
     }
 
+    /// Type information for SQL Server's `geometry` UDT.
+    pub fn geometry() -> Self {
+        Self::new("geometry", TdsDataType::Udt as u8, 0, None, None)
+    }
+
+    /// Type information for SQL Server's `geography` UDT.
+    pub fn geography() -> Self {
+        Self::new("geography", TdsDataType::Udt as u8, 0, None, None)
+    }
+
     /// Type information for `uniqueidentifier`.
     pub fn uuid() -> Self {
         Self::new("uniqueidentifier", TdsDataType::Guid as u8, 16, None, None)
@@ -258,6 +324,12 @@ impl MssqlTypeInfo {
     /// limited to the ones that resolve predictably; the caller falls back to
     /// reporting a parameter count for the rest.
     pub(crate) fn has_exact_rust_mapping(&self) -> bool {
+        // `geometry` and `geography` resolve to this driver's positional
+        // wrappers, which only exist when the `spatial` feature is on.
+        if self.is_geometry() || self.is_geography() {
+            return cfg!(feature = "spatial");
+        }
+
         // Character data is claimed by `String`/`&str` and binary data by
         // `Vec<u8>`/`&[u8]`; nothing earlier in the list accepts either kind, so
         // the first match is the intended one whatever the length is.
@@ -410,6 +482,10 @@ pub(crate) fn from_system_type_name(system_type_name: &str) -> Option<MssqlTypeI
         "image" => MssqlTypeInfo::new("image", TdsDataType::Image as u8, 65535, None, None),
         "xml" => MssqlTypeInfo::new("xml", TdsDataType::Xml as u8, 65535, None, None),
         "json" => MssqlTypeInfo::new("json", TdsDataType::Json as u8, 65535, None, None),
+        // `sp_describe_undeclared_parameters` suggests the UDT name for a
+        // parameter bound to a spatial column, with no length suffix.
+        "geometry" => MssqlTypeInfo::geometry(),
+        "geography" => MssqlTypeInfo::geography(),
         _ => return None,
     };
 
@@ -423,6 +499,43 @@ fn parse_argument(args: &str, index: usize) -> Option<u8> {
         .trim()
         .parse()
         .ok()
+}
+
+/// Whether a TDS type reports a decimal precision in column metadata.
+///
+/// `sp_describe_first_result_set` fills `precision` and `scale` for every
+/// numeric type, but [`MssqlTypeInfo`]'s constructors — and the column metadata
+/// of a real result set — only report them where they are meaningful. Leaving
+/// the extra values in place makes a described type fail to match its
+/// constructor exactly, and the query macros then fall back to the first
+/// `compatible` entry, which is `i8` for every numeric type. Normalizing the
+/// description to the same shape as the constructors keeps the two consistent.
+///
+/// This mirrors `ColumnMetadata::get_precision`.
+pub(crate) fn reports_precision(sql_data_type: u8) -> bool {
+    matches!(
+        TdsDataType::try_from(sql_data_type),
+        Ok(TdsDataType::DecimalN
+            | TdsDataType::NumericN
+            | TdsDataType::Money
+            | TdsDataType::Money4
+            | TdsDataType::MoneyN)
+    )
+}
+
+/// Whether a TDS type reports a decimal scale in column metadata.
+///
+/// This mirrors `ColumnMetadata::get_scale`; see [`reports_precision`] for why
+/// the description has to be normalized.
+pub(crate) fn reports_scale(sql_data_type: u8) -> bool {
+    matches!(
+        TdsDataType::try_from(sql_data_type),
+        Ok(TdsDataType::DecimalN
+            | TdsDataType::NumericN
+            | TdsDataType::TimeN
+            | TdsDataType::DateTime2N
+            | TdsDataType::DateTimeOffsetN)
+    )
 }
 
 /// Best-effort SQL Server name for a TDS type.
@@ -507,6 +620,32 @@ mod tests {
     fn rejects_types_it_does_not_model() {
         assert_eq!(from_system_type_name("sql_variant"), None);
         assert_eq!(from_system_type_name("hierarchyid"), None);
+    }
+
+    #[test]
+    fn models_the_spatial_udts_by_name() {
+        let geometry = from_system_type_name("geometry").unwrap();
+        let geography = from_system_type_name("geography").unwrap();
+
+        assert!(geometry.is_geometry());
+        assert!(!geometry.is_geography());
+        assert!(geography.is_geography());
+        assert!(!geography.is_geometry());
+
+        // A UDT payload is not binary data: it is the server's native
+        // serialization, which is not WKB.
+        assert!(!geometry.accepts_binary_data());
+        assert!(!geography.accepts_binary_data());
+
+        // The macros may report them only when a Rust mapping is compiled in.
+        assert_eq!(
+            geometry.has_exact_rust_mapping(),
+            cfg!(feature = "spatial")
+        );
+        assert_eq!(
+            geography.has_exact_rust_mapping(),
+            cfg!(feature = "spatial")
+        );
     }
 
     #[test]

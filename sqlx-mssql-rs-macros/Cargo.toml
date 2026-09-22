@@ -30,6 +30,9 @@ jiff = ["sqlx-mssql-rs-core/jiff"]
 json = ["sqlx-mssql-rs-core/json", "sqlx-macros-core/json"]
 rust_decimal = ["sqlx-mssql-rs-core/rust_decimal", "sqlx-macros-core/rust_decimal"]
 sqlx-toml = ["sqlx-mssql-rs-core/sqlx-toml", "sqlx-macros-core/sqlx-toml"]
+# `sqlx-macros-core` has no `spatial` support; the driver's own type table
+# carries it, so it only has to reach the host build of the core crate.
+spatial = ["sqlx-mssql-rs-core/spatial"]
 time = ["sqlx-mssql-rs-core/time", "sqlx-macros-core/time"]
 uuid = ["sqlx-mssql-rs-core/uuid", "sqlx-macros-core/uuid"]
 

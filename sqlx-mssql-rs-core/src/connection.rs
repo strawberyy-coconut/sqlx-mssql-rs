@@ -261,17 +261,34 @@ impl MssqlConnection {
                 text_at(values, type_name_column).unwrap_or_else(|| "unknown".to_owned());
             let tds_type = integer_at(values, tds_type_column).unwrap_or_default();
             let length = integer_at(values, length_column).unwrap_or_default();
+            let raw_type = u8::try_from(tds_type).unwrap_or(0);
+            let raw_precision = integer_at(values, precision_column)
+                .and_then(|value| u8::try_from(value).ok());
+            let raw_scale =
+                integer_at(values, scale_column).and_then(|value| u8::try_from(value).ok());
+
+            // `sp_describe_first_result_set` reports the storage type in
+            // `tds_type_id` — every nullable integer is `IntN`, for example —
+            // and fills precision and scale for every numeric type. The
+            // `system_type_name` is the logical type, and it is the same text
+            // the parameter path parses, so prefer it: it normalizes to the
+            // constructors, which is what the query macros match against.
+            let info = from_system_type_name(&type_name)
+                .unwrap_or_else(|| {
+                    MssqlTypeInfo::new(
+                        type_name,
+                        raw_type,
+                        u32::try_from(length).unwrap_or(0),
+                        raw_precision,
+                        raw_scale,
+                    )
+                })
+                .with_precision_scale(raw_precision, raw_scale);
 
             columns.push(MssqlColumn::new(
                 ordinal,
                 name,
-                MssqlTypeInfo::new(
-                    type_name,
-                    u8::try_from(tds_type).unwrap_or(0),
-                    u32::try_from(length).unwrap_or(0),
-                    integer_at(values, precision_column).and_then(|value| u8::try_from(value).ok()),
-                    integer_at(values, scale_column).and_then(|value| u8::try_from(value).ok()),
-                ),
+                info,
                 Some(bool_at(values, nullable_column).unwrap_or(true)),
             ));
         }

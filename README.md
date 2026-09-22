@@ -181,7 +181,7 @@ If the compiler reports "queries overflow the depth limit", this is the fix.
 | `decimal` / `rust_decimal` | no | `Decimal` type support |
 | `json` | no | `serde_json::Value` support |
 | `uuid` | no | `uuid::Uuid` support |
-| `spatial` | no | `geo-types` geometry support |
+| `spatial` | no | SQL Server `geometry` / `geography` support via `geo-types` |
 | `any` | no | `AnyConnection` support (used by the CLI) |
 | `integrated-auth` | no | Kerberos / NTLM authentication |
 
@@ -199,6 +199,35 @@ driver's `Vec<u8>`/`&[u8]` impls, and the compile-time type checks still report 
 `chrono` and `time`, so its types are matched directly. Enabling `jiff` therefore
 takes precedence over `chrono` and `time` when the query macros infer a date or
 time type.
+
+## Spatial Types
+
+SQL Server's `geometry` and `geography` are CLR UDTs whose payload is the
+server's own serialization, not WKB. With the `spatial` feature the driver
+decodes and encodes that serialization natively through two wrappers that keep
+the SRID, which `geo_types::Geometry` cannot carry:
+
+```rust
+use geo_types::{Geometry, Point};
+use sqlx_mssql_rs::{MssqlGeography, MssqlGeometry};
+
+let point = Geometry::Point(Point::new(1.0, 2.0));
+
+// INSERT INTO places (location) VALUES (?)
+query("INSERT INTO places (location) VALUES (?)")
+    .bind(MssqlGeometry::new(point.clone(), 4326))
+    .execute(&mut conn)
+    .await?;
+
+// SELECT location FROM places
+let stored: MssqlGeometry = row.try_get("location")?;
+assert_eq!(stored.srid(), 4326);
+```
+
+`geo_types::Geometry<f64>` itself maps to WKB held in a `varbinary` column, not to
+a spatial column. Select `.STAsBinary()` to read a spatial value that way. Only
+two-dimensional, non-curved shapes are supported, since `geo-types` has no
+representation for Z/M coordinates or curves.
 
 ## CLI (`sqlx-mssql`)
 
