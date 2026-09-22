@@ -25,7 +25,7 @@ use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_core::statement::Statement;
 use sqlx_core::Either;
 
-use sqlx_mssql_rs::{MssqlConnection, MssqlPool};
+use sqlx_mssql_rs::{MssqlConnectOptions, MssqlConnection, MssqlEncryption, MssqlPool};
 
 fn database_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -541,6 +541,29 @@ async fn binds_time_crate_temporal_parameters() {
         .await
         .expect("datetimeoffset bind failed");
     assert_eq!(echoed, offset);
+
+    conn.close().await.unwrap();
+}
+
+/// The stricter encryption modes have to survive the trip into the client, so
+/// connect with one rather than only inspecting the parsed options.
+#[tokio::test]
+async fn connects_with_required_encryption() {
+    use sqlx_core::connection::ConnectOptions;
+
+    let mut options: MssqlConnectOptions = database_url().parse().expect("URL should parse");
+    options.encryption(MssqlEncryption::Required);
+
+    let mut conn = options
+        .connect()
+        .await
+        .expect("a server that supports encryption should accept `required`");
+
+    let value: i32 = query_scalar("SELECT 1")
+        .fetch_one(&mut conn)
+        .await
+        .expect("query failed");
+    assert_eq!(value, 1);
 
     conn.close().await.unwrap();
 }

@@ -70,7 +70,7 @@ pub use database::Mssql;
 #[cfg_attr(docsrs, doc(cfg(feature = "offline")))]
 pub use describe::{describe_blocking, MSSQL_DRIVER};
 pub use error::{MssqlDatabaseError, MssqlError, Result};
-pub use options::MssqlConnectOptions;
+pub use options::{MssqlConnectOptions, MssqlEncryption};
 pub use query_result::MssqlQueryResult;
 pub use row::MssqlRow;
 pub use statement::MssqlStatement;

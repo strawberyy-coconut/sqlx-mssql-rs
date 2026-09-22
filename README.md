@@ -55,8 +55,9 @@ Port 1433 is assumed when omitted.
 
 | Parameter | Description |
 |---|---|
-| `encrypt=true` | Encrypt the connection (already the default) |
+| `encrypt=` | `on` (default), `required`, `strict` (TDS 8.0) or `off` |
 | `trust_certificate=true` | Skip server certificate validation |
+| `server_certificate=...` | Path to a DER or PEM certificate to pin |
 | `host_name_in_cert=...` | CN or SAN expected in the server certificate |
 | `application_name=...` | Application name reported to the server |
 | `connect_timeout=15` | Connection timeout, in seconds |
@@ -68,7 +69,7 @@ Port 1433 is assumed when omitted.
 use std::str::FromStr;
 use std::time::Duration;
 use sqlx_core::connection::ConnectOptions;
-use sqlx_mssql_rs::MssqlConnectOptions;
+use sqlx_mssql_rs::{MssqlConnectOptions, MssqlEncryption};
 
 let mut options = MssqlConnectOptions::from_str("mssql://localhost/testdb")?;
 options.encrypt(true)
@@ -81,6 +82,18 @@ let conn = options.connect().await?;
 `with_database()` returns a copy of the options pointing at a different
 database; migrations use it to reach `master` when creating or dropping a
 database.
+
+`encryption()` sets a mode beyond on/off — `MssqlEncryption::Required` refuses a
+plaintext connection and `MssqlEncryption::Strict` encrypts from the first byte,
+for servers configured to demand TDS 8.0. `server_certificate()` pins a specific
+certificate instead of relying on a trusted root, which is the alternative to
+turning validation off with `trust_certificate()`:
+
+```rust
+options
+    .encryption(MssqlEncryption::Strict)
+    .server_certificate("/etc/ssl/server.pem");
+```
 
 ## Encryption and Authentication
 

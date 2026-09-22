@@ -1,6 +1,7 @@
 //! Connection options and URL parsing for the MSSQL driver.
 
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -15,6 +16,39 @@ use crate::MssqlConnection;
 /// The port SQL Server listens on by default.
 const DEFAULT_PORT: u16 = 1433;
 
+/// How a connection encrypts its traffic.
+///
+/// These correspond to what the client asks for during the TDS pre-login
+/// handshake. This is a driver-owned type so that the `mssql-tds` client
+/// settings stay out of the public API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MssqlEncryption {
+    /// Do not encrypt, if the server allows an unencrypted connection.
+    PreferOff,
+    /// Encrypt everything after pre-login.
+    #[default]
+    On,
+    /// Require encryption after pre-login, failing if the server refuses.
+    Required,
+    /// Encrypt from the very start, including pre-login (TDS 8.0).
+    ///
+    /// Stricter than most server configurations accept, so it is not the
+    /// default.
+    Strict,
+}
+
+impl MssqlEncryption {
+    /// The equivalent `mssql-tds` setting.
+    fn to_setting(self) -> EncryptionSetting {
+        match self {
+            Self::PreferOff => EncryptionSetting::PreferOff,
+            Self::On => EncryptionSetting::On,
+            Self::Required => EncryptionSetting::Required,
+            Self::Strict => EncryptionSetting::Strict,
+        }
+    }
+}
+
 /// Connect options for an MSSQL database.
 ///
 /// Accepts a `mssql://` URL, for example:
@@ -28,8 +62,9 @@ const DEFAULT_PORT: u16 = 1433;
 /// | Parameter | Meaning |
 /// |-----------|---------|
 /// | `database` | Database name, overriding the URL path |
-/// | `encrypt` | `true` encrypts the connection, `false` prefers no encryption |
+/// | `encrypt` | `on`, `required`, `strict` or `off` (also `true`/`false`) |
 /// | `trust_certificate` | `true` skips server certificate validation |
+/// | `server_certificate` | Path to a DER or PEM certificate to pin |
 /// | `host_name_in_cert` | CN or SAN expected in the server certificate |
 /// | `application_name` | Application name reported to the server |
 /// | `connect_timeout` | Connection timeout in seconds |
@@ -40,8 +75,9 @@ pub struct MssqlConnectOptions {
     username: String,
     password: String,
     database: String,
-    encryption: EncryptionSetting,
+    encryption: MssqlEncryption,
     trust_server_certificate: bool,
+    server_certificate: Option<PathBuf>,
     host_name_in_cert: Option<String>,
     application_name: Option<String>,
     connect_timeout: Option<Duration>,
@@ -59,6 +95,7 @@ impl Debug for MssqlConnectOptions {
             .field("database", &self.database)
             .field("encryption", &self.encryption)
             .field("trust_server_certificate", &self.trust_server_certificate)
+            .field("server_certificate", &self.server_certificate)
             .finish()
     }
 }
@@ -72,10 +109,10 @@ impl Default for MssqlConnectOptions {
             password: String::new(),
             database: String::new(),
             // Encrypt after pre-login, matching the behaviour of the Microsoft
-            // ODBC driver's `Encrypt=yes`. `Strict` (TDS 8.0) is stricter than
-            // most servers support by default.
-            encryption: EncryptionSetting::On,
+            // ODBC driver's `Encrypt=yes`.
+            encryption: MssqlEncryption::On,
             trust_server_certificate: false,
+            server_certificate: None,
             host_name_in_cert: None,
             application_name: None,
             connect_timeout: None,
@@ -100,10 +137,10 @@ impl MssqlConnectOptions {
         context.password = self.password.clone();
         context.database = self.database.clone();
         context.encryption_options = EncryptionOptions {
-            mode: self.encryption,
+            mode: self.encryption.to_setting(),
             trust_server_certificate: self.trust_server_certificate,
             host_name_in_cert: self.host_name_in_cert.clone(),
-            server_certificate: None,
+            server_certificate: self.server_certificate.clone(),
         };
 
         if let Some(application_name) = &self.application_name {
@@ -144,12 +181,22 @@ impl MssqlConnectOptions {
         self
     }
 
+    /// Sets how the connection encrypts its traffic.
+    pub fn encryption(&mut self, mode: MssqlEncryption) -> &mut Self {
+        self.encryption = mode;
+        self
+    }
+
     /// Requests an encrypted connection.
+    ///
+    /// Shorthand for [`encryption`][Self::encryption], using
+    /// [`MssqlEncryption::On`] when `enabled` and
+    /// [`MssqlEncryption::PreferOff`] otherwise.
     pub fn encrypt(&mut self, enabled: bool) -> &mut Self {
         self.encryption = if enabled {
-            EncryptionSetting::On
+            MssqlEncryption::On
         } else {
-            EncryptionSetting::PreferOff
+            MssqlEncryption::PreferOff
         };
         self
     }
@@ -160,6 +207,17 @@ impl MssqlConnectOptions {
     /// should only be used against a server you trust on a private network.
     pub fn trust_certificate(&mut self, enabled: bool) -> &mut Self {
         self.trust_server_certificate = enabled;
+        self
+    }
+
+    /// Pins the server's certificate instead of validating its chain.
+    ///
+    /// The file must hold a DER or PEM encoded X.509 certificate, which is
+    /// matched byte for byte against the certificate the server presents. The
+    /// normal CA chain check is bypassed, so this is how to keep verification
+    /// without depending on a trusted root.
+    pub fn server_certificate(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.server_certificate = Some(path.into());
         self
     }
 
@@ -227,10 +285,13 @@ impl FromStr for MssqlConnectOptions {
             match key.as_ref() {
                 "database" => options.database = value.into_owned(),
                 "encrypt" => {
-                    options.encrypt(parse_bool(&key, &value)?);
+                    options.encryption = parse_encryption(&key, &value)?;
                 }
                 "trust_certificate" => {
                     options.trust_certificate(parse_bool(&key, &value)?);
+                }
+                "server_certificate" => {
+                    options.server_certificate = Some(PathBuf::from(value.into_owned()));
                 }
                 "host_name_in_cert" => options.host_name_in_cert = Some(value.into_owned()),
                 "application_name" => options.application_name = Some(value.into_owned()),
@@ -261,6 +322,33 @@ fn parse_bool(key: &str, value: &str) -> Result<bool, Error> {
             format!("`{key}` must be a boolean, got `{other}`").into(),
         )),
     }
+}
+
+/// Parses the `encrypt` query parameter.
+///
+/// The boolean spellings are still accepted, so URLs written before the
+/// stricter modes existed keep working.
+fn parse_encryption(key: &str, value: &str) -> Result<MssqlEncryption, Error> {
+    match value.to_ascii_lowercase().as_str() {
+        "on" => return Ok(MssqlEncryption::On),
+        "required" => return Ok(MssqlEncryption::Required),
+        "strict" => return Ok(MssqlEncryption::Strict),
+        "off" | "prefer-off" | "prefer_off" => return Ok(MssqlEncryption::PreferOff),
+        _ => {}
+    }
+
+    if let Ok(enabled) = parse_bool(key, value) {
+        return Ok(if enabled {
+            MssqlEncryption::On
+        } else {
+            MssqlEncryption::PreferOff
+        });
+    }
+
+    Err(Error::Configuration(
+        format!("`{key}` must be one of `on`, `required`, `strict` or `off`, got `{value}`")
+            .into(),
+    ))
 }
 
 /// Decodes `%XX` escapes in a URL component.
@@ -317,7 +405,9 @@ impl sqlx_core::connection::ConnectOptions for MssqlConnectOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::MssqlConnectOptions;
+    use std::path::Path;
+
+    use super::{MssqlConnectOptions, MssqlEncryption};
 
     #[test]
     fn parses_a_full_url() {
@@ -386,5 +476,73 @@ mod tests {
             .expect("URL should parse");
 
         assert_eq!(options.database(), "other");
+    }
+
+    #[test]
+    fn defaults_to_encrypting_after_pre_login() {
+        let options: MssqlConnectOptions = "mssql://sa:secret@localhost/master"
+            .parse()
+            .expect("URL should parse");
+
+        assert_eq!(options.encryption, MssqlEncryption::On);
+    }
+
+    #[test]
+    fn parses_every_encryption_mode() {
+        for (value, expected) in [
+            ("on", MssqlEncryption::On),
+            ("required", MssqlEncryption::Required),
+            ("strict", MssqlEncryption::Strict),
+            ("off", MssqlEncryption::PreferOff),
+            // Boolean spellings predate the modes and must keep working.
+            ("true", MssqlEncryption::On),
+            ("false", MssqlEncryption::PreferOff),
+        ] {
+            let url = format!("mssql://sa:secret@localhost/master?encrypt={value}");
+            let options: MssqlConnectOptions = url.parse().expect("URL should parse");
+
+            assert_eq!(options.encryption, expected, "encrypt={value}");
+        }
+    }
+
+    #[test]
+    fn rejects_an_unknown_encryption_mode() {
+        let error = "mssql://sa:secret@localhost/master?encrypt=sometimes"
+            .parse::<MssqlConnectOptions>()
+            .expect_err("an unknown mode should be rejected");
+
+        assert!(error.to_string().contains("`encrypt` must be one of"));
+    }
+
+    #[test]
+    fn parses_the_server_certificate_parameter() {
+        let options: MssqlConnectOptions =
+            "mssql://sa:secret@localhost/master?server_certificate=%2Fetc%2Fssl%2Fserver.pem"
+                .parse()
+                .expect("URL should parse");
+
+        assert_eq!(
+            options.server_certificate.as_deref(),
+            Some(Path::new("/etc/ssl/server.pem"))
+        );
+    }
+
+    #[test]
+    fn forwards_the_tls_settings_to_the_client_context() {
+        use mssql_tds::core::EncryptionSetting;
+
+        let options: MssqlConnectOptions = "mssql://sa:secret@localhost/master\
+             ?encrypt=strict&server_certificate=/etc/ssl/server.pem&host_name_in_cert=db.example"
+            .parse()
+            .expect("URL should parse");
+
+        let encryption = options.client_context().encryption_options;
+
+        assert!(matches!(encryption.mode, EncryptionSetting::Strict));
+        assert_eq!(
+            encryption.server_certificate.as_deref(),
+            Some(Path::new("/etc/ssl/server.pem"))
+        );
+        assert_eq!(encryption.host_name_in_cert.as_deref(), Some("db.example"));
     }
 }
