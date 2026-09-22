@@ -489,6 +489,19 @@ async fn binds_temporal_parameters() {
         .expect("datetimeoffset bind failed");
     assert_eq!(echoed, offset);
 
+    // A non-zero offset is what actually exercises recovering the instant: the
+    // stored time is already UTC, so the offset must not be applied a second
+    // time.
+    let offset_literal: chrono::DateTime<Utc> =
+        query_scalar("SELECT CAST('2026-09-21T12:34:56+02:00' AS datetimeoffset)")
+            .fetch_one(&mut conn)
+            .await
+            .expect("offset literal decode failed");
+    assert_eq!(
+        offset_literal,
+        Utc.with_ymd_and_hms(2026, 9, 21, 10, 34, 56).unwrap()
+    );
+
     conn.close().await.unwrap();
 }
 
@@ -564,6 +577,74 @@ async fn connects_with_required_encryption() {
         .await
         .expect("query failed");
     assert_eq!(value, 1);
+
+    conn.close().await.unwrap();
+}
+
+/// The `jiff` integration is separate code again, and its day arithmetic is
+/// derived from instants rather than a day-number API.
+#[cfg(feature = "jiff")]
+#[tokio::test]
+async fn binds_jiff_temporal_parameters() {
+    use jiff::civil::{Date, DateTime, Time};
+    use jiff::tz::TimeZone;
+    use jiff::Timestamp;
+
+    let mut conn = get_test_conn().await;
+
+    let date = Date::new(2026, 9, 21).unwrap();
+    let time_of_day = Time::new(12, 34, 56, 0).unwrap();
+
+    let echoed: Date = query_scalar("SELECT ?")
+        .bind(date)
+        .fetch_one(&mut conn)
+        .await
+        .expect("date bind failed");
+    assert_eq!(echoed, date);
+
+    let echoed: Time = query_scalar("SELECT ?")
+        .bind(time_of_day)
+        .fetch_one(&mut conn)
+        .await
+        .expect("time bind failed");
+    assert_eq!(echoed, time_of_day);
+
+    let datetime = DateTime::new(2026, 9, 21, 12, 34, 56, 0).unwrap();
+    let echoed: DateTime = query_scalar("SELECT ?")
+        .bind(datetime)
+        .fetch_one(&mut conn)
+        .await
+        .expect("datetime2 bind failed");
+    assert_eq!(echoed, datetime);
+
+    // A server-generated value guards against a symmetric encode/decode error.
+    let literal: DateTime = query_scalar("SELECT CAST('2026-09-21T12:34:56' AS datetime2)")
+        .fetch_one(&mut conn)
+        .await
+        .expect("literal decode failed");
+    assert_eq!(literal, datetime);
+
+    let timestamp = datetime.to_zoned(TimeZone::UTC).unwrap().timestamp();
+    let echoed: Timestamp = query_scalar("SELECT ?")
+        .bind(timestamp)
+        .fetch_one(&mut conn)
+        .await
+        .expect("datetimeoffset bind failed");
+    assert_eq!(echoed, timestamp);
+
+    // A non-zero offset is what actually exercises turning a wall clock plus an
+    // offset back into an instant.
+    let utc = DateTime::new(2026, 9, 21, 10, 34, 56, 0)
+        .unwrap()
+        .to_zoned(TimeZone::UTC)
+        .unwrap()
+        .timestamp();
+    let offset_literal: Timestamp =
+        query_scalar("SELECT CAST('2026-09-21T12:34:56+02:00' AS datetimeoffset)")
+            .fetch_one(&mut conn)
+            .await
+            .expect("offset literal decode failed");
+    assert_eq!(offset_literal, utc);
 
     conn.close().await.unwrap();
 }

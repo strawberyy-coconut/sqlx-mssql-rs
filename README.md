@@ -177,6 +177,7 @@ If the compiler reports "queries overflow the depth limit", this is the fix.
 | `bstr` | no | `BString` / `BStr` support |
 | `chrono` | no | `chrono` datetime types |
 | `time` | no | `time` datetime types |
+| `jiff` | no | `jiff` datetime types |
 | `decimal` / `rust_decimal` | no | `Decimal` type support |
 | `json` | no | `serde_json::Value` support |
 | `uuid` | no | `uuid::Uuid` support |
@@ -193,6 +194,11 @@ with "SQLx found config file ... but the `sqlx-toml` feature was not enabled".
 `bstr` is a value-level convenience: `BString`/`BStr` conversions delegate to the
 driver's `Vec<u8>`/`&[u8]` impls, and the compile-time type checks still report a
 `varbinary` parameter as `&[u8]`.
+
+`jiff` has no section in `sqlx-macros-core`'s type-checking tables, unlike
+`chrono` and `time`, so its types are matched directly. Enabling `jiff` therefore
+takes precedence over `chrono` and `time` when the query macros infer a date or
+time type.
 
 ## CLI (`sqlx-mssql`)
 

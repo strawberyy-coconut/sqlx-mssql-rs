@@ -1,6 +1,6 @@
 //! `chrono` date and time support.
 
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 use mssql_tds::datatypes::column_values::{
     ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlSmallDateTime, SqlTime,
@@ -247,16 +247,12 @@ impl<'r> Decode<'r, Mssql> for DateTime<Utc> {
     fn decode(value: MssqlValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.raw() {
             ColumnValues::DateTimeOffset(datetime) => {
-                let naive = naive_from_datetime2(&datetime.datetime2)
-                    .ok_or("DATETIMEOFFSET value is out of range for chrono")?;
-                let offset = FixedOffset::east_opt(i32::from(datetime.offset) * 60)
-                    .ok_or("DATETIMEOFFSET carried an invalid UTC offset")?;
-                let local = naive
-                    .and_local_timezone(offset)
-                    .single()
-                    .ok_or("DATETIMEOFFSET is an ambiguous local time")?;
-
-                Ok(local.with_timezone(&Utc))
+                // `mssql-tds` normalises the time part to UTC and keeps the
+                // original offset beside it, so the offset must not be applied
+                // again to recover the instant.
+                naive_from_datetime2(&datetime.datetime2)
+                    .map(|naive| DateTime::from_naive_utc_and_offset(naive, Utc))
+                    .ok_or_else(|| "DATETIMEOFFSET value is out of range for chrono".into())
             }
             ColumnValues::DateTime2(datetime) => naive_from_datetime2(datetime)
                 .map(|naive| DateTime::from_naive_utc_and_offset(naive, Utc))

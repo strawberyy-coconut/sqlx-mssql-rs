@@ -25,6 +25,8 @@ derive = ["sqlx-macros-core/derive"]
 migrate = ["sqlx-macros-core/migrate"]
 bigdecimal = ["sqlx-mssql-rs-core/bigdecimal", "sqlx-macros-core/bigdecimal"]
 chrono = ["sqlx-mssql-rs-core/chrono", "sqlx-macros-core/chrono"]
+# `sqlx-macros-core` has no `jiff` support, so there is nothing to forward to it.
+jiff = ["sqlx-mssql-rs-core/jiff"]
 json = ["sqlx-mssql-rs-core/json", "sqlx-macros-core/json"]
 rust_decimal = ["sqlx-mssql-rs-core/rust_decimal", "sqlx-macros-core/rust_decimal"]
 sqlx-toml = ["sqlx-mssql-rs-core/sqlx-toml", "sqlx-macros-core/sqlx-toml"]

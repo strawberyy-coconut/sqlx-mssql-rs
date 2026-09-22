@@ -18,6 +18,18 @@ sqlx_core::impl_type_checking!(
 
         #[cfg(feature = "uuid")]
         sqlx::types::Uuid,
+
+        // `sqlx-macros-core` has no `jiff` section, so these live in the main
+        // list. They match date/time types exactly, which means an enabled
+        // `jiff` takes precedence over `chrono` and `time` for inference.
+        #[cfg(feature = "jiff")]
+        jiff::civil::Date,
+        #[cfg(feature = "jiff")]
+        jiff::civil::Time,
+        #[cfg(feature = "jiff")]
+        jiff::civil::DateTime,
+        #[cfg(feature = "jiff")]
+        jiff::Timestamp,
     },
     ParamChecking::Weak,
     // The TDS layer decodes any column into a general representation that the

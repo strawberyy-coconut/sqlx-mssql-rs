@@ -24,6 +24,9 @@ bstr = ["sqlx-core/bstr"]
 chrono = ["dep:chrono", "sqlx-core/chrono"]
 time = ["dep:time", "sqlx-core/time"]
 decimal = ["rust_decimal"]
+# `sqlx-core` and `sqlx-macros-core` have no `jiff` support, so this is a plain
+# optional dependency of this crate.
+jiff = ["dep:jiff"]
 json = ["dep:serde_json", "sqlx-core/json"]
 migrate = ["sqlx-core/migrate"]
 offline = ["sqlx-core/offline", "dep:serde", "dep:sqlx-macros-core"]
@@ -46,6 +49,7 @@ futures-core = { version = "0.3.32", default-features = false }
 futures-util = { version = "0.3.32", default-features = false, features = ["alloc"] }
 geo-traits = { version = "0.3", optional = true, features = ["geo-types"] }
 geo-types = { version = "0.7", optional = true }
+jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
 log = "0.4.28"
 rust_decimal = { version = "1.36.0", default-features = false, features = ["std"], optional = true }
 serde = { version = "1.0.219", features = ["derive", "rc"], optional = true }
