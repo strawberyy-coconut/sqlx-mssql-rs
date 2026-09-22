@@ -22,6 +22,8 @@ members = ["examples/full", "sqlx-mssql-rs-cli", "sqlx-mssql-rs-core", "sqlx-mss
 default = ["macros", "derive", "migrate", "offline"]
 # Type features are forwarded to both core and macros.
 bigdecimal = ["sqlx-mssql-rs-core/bigdecimal", "sqlx-mssql-rs-macros?/bigdecimal"]
+# `BString`/`BStr` impls are generic in sqlx-core, so no macro wiring is needed.
+bstr = ["sqlx-mssql-rs-core/bstr"]
 chrono = ["sqlx-mssql-rs-core/chrono", "sqlx-mssql-rs-macros?/chrono"]
 time = ["sqlx-mssql-rs-core/time", "sqlx-mssql-rs-macros?/time"]
 decimal = ["sqlx-mssql-rs-core/decimal"]
@@ -33,6 +35,8 @@ spatial = ["sqlx-mssql-rs-core/spatial"]
 any = ["sqlx-mssql-rs-core/any"]
 migrate = ["sqlx-mssql-rs-core/migrate"]
 offline = ["sqlx-mssql-rs-core/offline"]
+# Parsing of `sqlx.toml`, which drives type overrides and preferred crates.
+sqlx-toml = ["sqlx-mssql-rs-core/sqlx-toml", "sqlx-mssql-rs-macros?/sqlx-toml"]
 # Opt-in Kerberos / NTLM authentication.
 integrated-auth = ["sqlx-mssql-rs-core/integrated-auth"]
 # Macro features.
@@ -48,5 +52,6 @@ sqlx-mssql-rs-macros = { version = "0.1.0", path = "./sqlx-mssql-rs-macros", opt
 chrono = { version = "0.4.34", default-features = false, features = ["std", "clock"] }
 futures-util = "0.3.32"
 log = "0.4"
+time = "0.3"
 tokio = { version = "1.25.0", features = ["macros", "rt", "rt-multi-thread"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["macros"] }

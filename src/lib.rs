@@ -36,7 +36,8 @@
 //! | `derive` | yes | `Encode`, `Decode`, `Type`, `FromRow` derives |
 //! | `migrate` | yes | Migration support |
 //! | `offline` | yes | Offline query metadata via `.sqlx` |
-//! | `uuid`, `chrono`, `time`, `json` | no | Type integrations |
+//! | `sqlx-toml` | no | `sqlx.toml` type overrides and preferred crates |
+//! | `uuid`, `chrono`, `time`, `json`, `bstr` | no | Type integrations |
 //! | `bigdecimal`, `rust_decimal`, `decimal` | no | Exact numeric integrations |
 //! | `spatial` | no | `geo-types` geometry support |
 //! | `integrated-auth` | no | Kerberos / NTLM authentication |

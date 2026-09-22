@@ -18,6 +18,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = []
 any = ["sqlx-core/any"]
 bigdecimal = ["dep:bigdecimal", "sqlx-core/bigdecimal"]
+# `BString`/`BStr` support is entirely generic in sqlx-core, delegating to the
+# `Vec<u8>`/`[u8]` impls this driver already has.
+bstr = ["sqlx-core/bstr"]
 chrono = ["dep:chrono", "sqlx-core/chrono"]
 time = ["dep:time", "sqlx-core/time"]
 decimal = ["rust_decimal"]
@@ -26,6 +29,8 @@ migrate = ["sqlx-core/migrate"]
 offline = ["sqlx-core/offline", "dep:serde", "dep:sqlx-macros-core"]
 rust_decimal = ["dep:rust_decimal", "sqlx-core/rust_decimal"]
 spatial = ["dep:geo-types", "dep:geo-traits", "dep:wkb"]
+# Parsing of `sqlx.toml`, which drives type overrides and preferred crates.
+sqlx-toml = ["sqlx-core/sqlx-toml"]
 uuid = ["dep:uuid", "sqlx-core/uuid"]
 integrated-auth = ["mssql-tds/integrated-auth"]
 

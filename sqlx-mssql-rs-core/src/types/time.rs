@@ -17,6 +17,10 @@ const DAYS_FROM_YEAR_ONE_TO_EPOCH: i64 = 719_162;
 
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
+/// Used to split a time of day into its hour, minute and second parts.
+const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+
 fn date_from_days(days: u32) -> Option<Date> {
     let unix_days = i64::from(days) - DAYS_FROM_YEAR_ONE_TO_EPOCH;
     let epoch = Date::from_calendar_date(1970, Month::January, 1).ok()?;
@@ -30,13 +34,24 @@ fn days_from_date(date: Date) -> Option<u32> {
 }
 
 fn time_from_nanos(nanoseconds: u64) -> Option<Time> {
-    let seconds = u8::try_from(nanoseconds / NANOS_PER_SECOND).ok()?;
+    // `SqlTime` counts nanoseconds since midnight, so the hour, minute and
+    // second all have to be recovered from it.
+    let total_seconds = nanoseconds / NANOS_PER_SECOND;
     let subsecond = u32::try_from(nanoseconds % NANOS_PER_SECOND).ok()?;
-    Time::from_hms_nano(0, 0, seconds, subsecond).ok()
+
+    let hour = u8::try_from(total_seconds / SECONDS_PER_HOUR).ok()?;
+    let minute = u8::try_from((total_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE).ok()?;
+    let second = u8::try_from(total_seconds % SECONDS_PER_MINUTE).ok()?;
+
+    Time::from_hms_nano(hour, minute, second, subsecond).ok()
 }
 
 fn nanos_from_time(time: Time) -> u64 {
-    u64::from(time.second()) * NANOS_PER_SECOND + u64::from(time.nanosecond())
+    let seconds = u64::from(time.hour()) * SECONDS_PER_HOUR
+        + u64::from(time.minute()) * SECONDS_PER_MINUTE
+        + u64::from(time.second());
+
+    seconds * NANOS_PER_SECOND + u64::from(time.nanosecond())
 }
 
 fn datetime2_from_primitive(value: PrimitiveDateTime) -> Option<SqlDateTime2> {
@@ -181,9 +196,13 @@ impl Type<Mssql> for OffsetDateTime {
 
 impl<'q> Encode<'q, Mssql> for OffsetDateTime {
     fn encode_by_ref(&self, buf: &mut Vec<MssqlArgumentValue>) -> Result<IsNull, BoxDynError> {
-        let value = datetime2_from_primitive(self.to_offset(UtcOffset::UTC).into()).ok_or_else(
-            || format!("{self} is outside the range SQL Server DATETIMEOFFSET accepts"),
-        )?;
+        // The offset is always written as UTC, so drop it explicitly: `time`
+        // provides no `From<OffsetDateTime>` conversion to build on.
+        let utc = self.to_offset(UtcOffset::UTC);
+        let value = datetime2_from_primitive(PrimitiveDateTime::new(utc.date(), utc.time()))
+            .ok_or_else(|| {
+                format!("{self} is outside the range SQL Server DATETIMEOFFSET accepts")
+            })?;
 
         buf.push(MssqlArgumentValue::new(SqlType::DateTimeOffset(Some(
             SqlDateTimeOffset {
@@ -199,9 +218,9 @@ impl<'r> Decode<'r, Mssql> for OffsetDateTime {
     fn decode(value: MssqlValueRef<'r>) -> Result<Self, BoxDynError> {
         match value.raw() {
             ColumnValues::DateTimeOffset(datetime) => {
-                let naive = primitive_from_datetime2(&datetime.datetime2).ok_or_else(|| {
-                    "DATETIMEOFFSET value is out of range for time::OffsetDateTime"
-                })?;
+                let naive = primitive_from_datetime2(&datetime.datetime2).ok_or(
+                    "DATETIMEOFFSET value is out of range for time::OffsetDateTime",
+                )?;
                 let offset = UtcOffset::from_whole_seconds(i32::from(datetime.offset) * 60)?;
 
                 Ok(naive.assume_offset(offset))

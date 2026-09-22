@@ -159,7 +159,9 @@ If the compiler reports "queries overflow the depth limit", this is the fix.
 | `derive` | yes | `Encode`, `Decode`, `Type`, `FromRow` derive macros |
 | `migrate` | yes | Migration support |
 | `offline` | yes | Compile-time checking against a `.sqlx` cache |
+| `sqlx-toml` | no | `sqlx.toml`: type overrides and preferred crates |
 | `bigdecimal` | no | `BigDecimal` type support |
+| `bstr` | no | `BString` / `BStr` support |
 | `chrono` | no | `chrono` datetime types |
 | `time` | no | `time` datetime types |
 | `decimal` / `rust_decimal` | no | `Decimal` type support |
@@ -171,6 +173,13 @@ If the compiler reports "queries overflow the depth limit", this is the fix.
 
 There are no `runtime-*` or `tls-*` features: the driver is Tokio-only and TLS
 lives inside the TDS handshake.
+
+A `sqlx.toml` requires the `sqlx-toml` feature. Without it the query macros stop
+with "SQLx found config file ... but the `sqlx-toml` feature was not enabled".
+
+`bstr` is a value-level convenience: `BString`/`BStr` conversions delegate to the
+driver's `Vec<u8>`/`&[u8]` impls, and the compile-time type checks still report a
+`varbinary` parameter as `&[u8]`.
 
 ## CLI (`sqlx-mssql`)
 
@@ -277,9 +286,10 @@ The integration tests create tables under unique names and drop them again, so
 the suite is safe to run against a shared server. If `DATABASE_URL` is unset it
 defaults to `mssql://sa:Password1!@localhost:1433/master?trust_certificate=true`.
 
-Some tests are gated behind type features; run those with the feature enabled:
+Some tests are gated behind type features (`chrono`, `time`, `bstr`), so run the
+whole suite with everything enabled:
 
 ```bash
 DATABASE_URL="mssql://sa:MyPass@localhost:1433/master?trust_certificate=true" \
-  cargo test --workspace --features chrono
+  cargo test --workspace --all-features
 ```

@@ -39,6 +39,6 @@ impl<'r> Decode<'r, Mssql> for Geometry<f64> {
             return Err("cannot decode value into a geometry: expected binary".into());
         };
 
-        Ok(wkb::reader::read_wkb(&bytes)?.to_geometry())
+        Ok(wkb::reader::read_wkb(bytes)?.to_geometry())
     }
 }

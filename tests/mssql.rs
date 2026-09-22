@@ -170,6 +170,30 @@ async fn binds_positional_parameters() {
     conn.close().await.unwrap();
 }
 
+/// `BString`/`BStr` support comes from generic impls in `sqlx-core` that
+/// delegate to the driver's `Vec<u8>`/`[u8]` impls, so this checks the wiring
+/// actually reaches them.
+#[cfg(feature = "bstr")]
+#[tokio::test]
+async fn binds_and_reads_bstr_values() {
+    use sqlx_core::types::bstr::BString;
+
+    let mut conn = get_test_conn().await;
+
+    // Not valid UTF-8, so it cannot round-trip through a text path.
+    let value = BString::from(&b"binary\xffdata"[..]);
+
+    let read: BString = query_scalar("SELECT ?")
+        .bind(value.clone())
+        .fetch_one(&mut conn)
+        .await
+        .expect("bstr bind failed");
+
+    assert_eq!(read, value);
+
+    conn.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn binds_heterogeneous_and_null_parameters() {
     let mut conn = get_test_conn().await;
@@ -459,6 +483,59 @@ async fn binds_temporal_parameters() {
     let offset = Utc.with_ymd_and_hms(2026, 9, 21, 12, 34, 56).unwrap();
 
     let echoed: chrono::DateTime<Utc> = query_scalar("SELECT ?")
+        .bind(offset)
+        .fetch_one(&mut conn)
+        .await
+        .expect("datetimeoffset bind failed");
+    assert_eq!(echoed, offset);
+
+    conn.close().await.unwrap();
+}
+
+/// The `time` integration is entirely separate code from `chrono`, so it needs
+/// its own round-trip rather than relying on the test above.
+#[cfg(feature = "time")]
+#[tokio::test]
+async fn binds_time_crate_temporal_parameters() {
+    use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
+
+    let mut conn = get_test_conn().await;
+
+    let date = Date::from_calendar_date(2026, Month::September, 21).unwrap();
+    let time_of_day = Time::from_hms(12, 34, 56).unwrap();
+
+    let echoed: Date = query_scalar("SELECT ?")
+        .bind(date)
+        .fetch_one(&mut conn)
+        .await
+        .expect("date bind failed");
+    assert_eq!(echoed, date);
+
+    let echoed: Time = query_scalar("SELECT ?")
+        .bind(time_of_day)
+        .fetch_one(&mut conn)
+        .await
+        .expect("time bind failed");
+    assert_eq!(echoed, time_of_day);
+
+    let primitive = PrimitiveDateTime::new(date, time_of_day);
+    let echoed: PrimitiveDateTime = query_scalar("SELECT ?")
+        .bind(primitive)
+        .fetch_one(&mut conn)
+        .await
+        .expect("datetime2 bind failed");
+    assert_eq!(echoed, primitive);
+
+    // A server-generated value guards against a symmetric encode/decode error.
+    let literal: PrimitiveDateTime =
+        query_scalar("SELECT CAST('2026-09-21T12:34:56' AS datetime2)")
+            .fetch_one(&mut conn)
+            .await
+            .expect("literal decode failed");
+    assert_eq!(literal, primitive);
+
+    let offset = OffsetDateTime::new_utc(date, time_of_day);
+    let echoed: OffsetDateTime = query_scalar("SELECT ?")
         .bind(offset)
         .fetch_one(&mut conn)
         .await
