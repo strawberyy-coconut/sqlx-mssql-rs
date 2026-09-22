@@ -35,7 +35,13 @@ use crate::{Mssql, MssqlArgumentValue, MssqlTypeInfo, MssqlValueRef};
 /// `geo_types::Geometry` cannot carry an SRID, so it is kept alongside. Use
 /// [`new`](Self::new) to build one and [`geometry`](Self::geometry) to borrow the
 /// shape.
+///
+/// With the `spatial-serde` feature it is `Serialize` and `Deserialize`. The
+/// representation is `geo-types`' derived shape (for example
+/// `{"srid":4326,"geometry":{"Point":{"x":1.0,"y":2.0}}}`), which is
+/// intended for transport within your own system, not as GeoJSON or WKB.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "spatial-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MssqlGeometry {
     srid: i32,
     geometry: Geometry<f64>,
@@ -70,7 +76,11 @@ impl MssqlGeometry {
 ///
 /// A `geography` always has a valid SRID (SQL Server rejects `0`), so unlike
 /// [`MssqlGeometry`] there is no meaningful default and the SRID is required.
+///
+/// With the `spatial-serde` feature it is `Serialize` and `Deserialize`, using
+/// the same representation as [`MssqlGeometry`].
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "spatial-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MssqlGeography {
     srid: i32,
     geometry: Geometry<f64>,
@@ -265,6 +275,34 @@ mod mapping_tests {
             )
             .unwrap(),
             "sqlx_mssql_rs::MssqlGeography"
+        );
+    }
+}
+
+/// The serialized shape is deliberately pinned: it is `geo-types`' derived
+/// representation, so a `geo-types` change that alters it should fail here
+/// rather than silently change what users store.
+#[cfg(all(test, feature = "spatial-serde"))]
+mod serde_tests {
+    use super::*;
+    use geo_types::Point;
+
+    #[test]
+    fn round_trips_through_serde() {
+        let value = MssqlGeometry::new(Geometry::Point(Point::new(1.0, 2.0)), 4326);
+
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(
+            json,
+            r#"{"srid":4326,"geometry":{"Point":{"x":1.0,"y":2.0}}}"#
+        );
+        assert_eq!(serde_json::from_str::<MssqlGeometry>(&json).unwrap(), value);
+
+        let geography = MssqlGeography::new(Geometry::Point(Point::new(1.0, 2.0)), 4326);
+        let json = serde_json::to_string(&geography).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MssqlGeography>(&json).unwrap(),
+            geography
         );
     }
 }

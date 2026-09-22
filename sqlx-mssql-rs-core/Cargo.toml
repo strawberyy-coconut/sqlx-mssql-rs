@@ -32,6 +32,10 @@ migrate = ["sqlx-core/migrate"]
 offline = ["sqlx-core/offline", "dep:serde", "dep:sqlx-macros-core"]
 rust_decimal = ["dep:rust_decimal", "sqlx-core/rust_decimal"]
 spatial = ["dep:geo-types", "dep:geo-traits", "dep:wkb"]
+# `Serialize`/`Deserialize` for the spatial wrappers, so they can live in
+# `serde`-derived structs. The representation is `geo-types`' derived shape,
+# not GeoJSON or WKB.
+spatial-serde = ["spatial", "dep:serde", "geo-types/serde"]
 # Parsing of `sqlx.toml`, which drives type overrides and preferred crates.
 sqlx-toml = ["sqlx-core/sqlx-toml"]
 uuid = ["dep:uuid", "sqlx-core/uuid"]
@@ -62,3 +66,6 @@ tokio = { version = "1.52.3", features = ["rt", "net", "time"] }
 url = "2.5.7"
 uuid = { version = "1.12.1", optional = true }
 wkb = { version = "0.9.2", optional = true }
+
+[dev-dependencies]
+serde_json = "1"

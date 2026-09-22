@@ -182,6 +182,7 @@ If the compiler reports "queries overflow the depth limit", this is the fix.
 | `json` | no | `serde_json::Value` support |
 | `uuid` | no | `uuid::Uuid` support |
 | `spatial` | no | SQL Server `geometry` / `geography` support via `geo-types` |
+| `spatial-serde` | no | `Serialize` / `Deserialize` for `MssqlGeometry` and `MssqlGeography` |
 | `any` | no | `AnyConnection` support (used by the CLI) |
 | `integrated-auth` | no | Kerberos / NTLM authentication |
 
@@ -228,6 +229,17 @@ assert_eq!(stored.srid(), 4326);
 a spatial column. Select `.STAsBinary()` to read a spatial value that way. Only
 two-dimensional, non-curved shapes are supported, since `geo-types` has no
 representation for Z/M coordinates or curves.
+
+With the `spatial-serde` feature both wrappers are `Serialize` and
+`Deserialize`, so they can live in `serde`-derived structs:
+
+```json
+{"srid":4326,"geometry":{"Point":{"x":1.0,"y":2.0}}}
+```
+
+That shape is `geo-types`' derived representation, not GeoJSON or WKB; it is
+meant for transport within your own system. Serialize `geometry()` with the
+`geojson` crate if you need GeoJSON.
 
 ## CLI (`sqlx-mssql`)
 

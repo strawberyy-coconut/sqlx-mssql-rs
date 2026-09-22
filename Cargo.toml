@@ -33,6 +33,9 @@ json = ["sqlx-mssql-rs-core/json", "sqlx-mssql-rs-macros?/json"]
 rust_decimal = ["sqlx-mssql-rs-core/rust_decimal", "sqlx-mssql-rs-macros?/rust_decimal"]
 uuid = ["sqlx-mssql-rs-core/uuid", "sqlx-mssql-rs-macros?/uuid"]
 spatial = ["sqlx-mssql-rs-core/spatial", "sqlx-mssql-rs-macros?/spatial"]
+# Implies `spatial`: the type-checking table used by the query macros has to be
+# compiled into the proc-macro host as well, which `spatial` forwards.
+spatial-serde = ["spatial", "sqlx-mssql-rs-core/spatial-serde"]
 # Integration features.
 any = ["sqlx-mssql-rs-core/any"]
 migrate = ["sqlx-mssql-rs-core/migrate"]

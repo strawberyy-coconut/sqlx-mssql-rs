@@ -40,6 +40,7 @@
 //! | `uuid`, `chrono`, `time`, `jiff`, `json`, `bstr` | no | Type integrations |
 //! | `bigdecimal`, `rust_decimal`, `decimal` | no | Exact numeric integrations |
 //! | `spatial` | no | SQL Server `geometry` / `geography` support via `geo-types` |
+//! | `spatial-serde` | no | `Serialize` / `Deserialize` for `MssqlGeometry` and `MssqlGeography` |
 //! | `integrated-auth` | no | Kerberos / NTLM authentication |
 //!
 //! # Spatial types
@@ -49,7 +50,9 @@
 //! `MssqlGeometry` and `MssqlGeography`, which keep the SRID that
 //! `geo_types::Geometry` cannot carry. `geo_types::Geometry<f64>` itself maps to
 //! WKB held in a `varbinary` column; select `.STAsBinary()` to read a spatial
-//! value that way.
+//! value that way. Add `spatial-serde` to make both wrappers `Serialize` and
+//! `Deserialize`; their representation is `geo-types`' derived shape, not
+//! GeoJSON or WKB.
 //!
 //! # Authentication
 //!
