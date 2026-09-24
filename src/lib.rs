@@ -8,7 +8,6 @@
 //! # Connection
 //!
 //! ```no_run
-//! #![recursion_limit = "512"]
 //! use sqlx_mssql_rs::MssqlPool;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -60,17 +59,12 @@
 //! NTLM; on Unix the GSSAPI library is loaded at runtime, so no build-time
 //! Kerberos dependency is required.
 //!
-//! # Recursion limit
+//! # Compiler recursion limit
 //!
-//! Query builder types and the generated type-checking tables are deeply
-//! nested, so a crate that uses the query builders heavily may need to raise
-//! the compiler's limit:
-//!
-//! ```ignore
-//! #![recursion_limit = "512"]
-//! ```
-//!
-//! If you see "queries overflow the depth limit", this is the fix.
+//! The futures this driver returns are type-erased internally, so a crate that
+//! uses it does not need a raised `#![recursion_limit]`. If the compiler reports
+//! "queries overflow the depth limit" while pinned to an older release,
+//! `#![recursion_limit = "512"]` is the fix there.
 //!
 //! [`mssql-tds`]: https://github.com/microsoft/mssql-rs
 

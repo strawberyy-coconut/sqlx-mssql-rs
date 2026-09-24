@@ -9,9 +9,6 @@
 //! Tables are created with unique names and dropped again, so the suite can be
 //! run against a shared server.
 
-// The generated type-checking impls and query builder types are deeply nested.
-#![recursion_limit = "512"]
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::StreamExt;

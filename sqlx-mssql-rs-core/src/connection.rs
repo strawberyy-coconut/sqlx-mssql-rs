@@ -57,8 +57,11 @@ impl MssqlConnection {
         let datasource = options.datasource();
         let context = options.client_context();
 
-        let client = TdsConnectionProvider
-            .create_client(context, &datasource, None)
+        // `mssql-tds`'s client-creation future is deeply nested. Awaiting it
+        // unboxed splices that type into this opaque future, where it counts
+        // against the recursion limit of every crate that connects. Boxing
+        // type-erases it, keeping callers well inside the default.
+        let client = Box::pin(TdsConnectionProvider.create_client(context, &datasource, None))
             .await
             .map_err(|error| {
                 sqlx_core::Error::from(database_error_with_context(
@@ -774,7 +777,9 @@ impl Connection for MssqlConnection {
         let MssqlConnection { client, .. } = self;
         let mut client = client;
 
-        client.close_connection().await.map_err(|error| {
+        // Boxed for the same reason as `connect_with`: the close chain is deep
+        // and the pool closes connections when it releases them.
+        Box::pin(client.close_connection()).await.map_err(|error| {
             sqlx_core::Error::from(database_error_with_context(
                 error,
                 "failed to close the connection",
@@ -788,7 +793,9 @@ impl Connection for MssqlConnection {
     }
 
     async fn ping(&mut self) -> Result<(), sqlx_core::Error> {
-        self.execute_simple("SELECT 1").await
+        // `execute_simple` is deep and `Pool::acquire` pings on every checkout,
+        // so this chain otherwise reaches more callers than any other.
+        Box::pin(self.execute_simple("SELECT 1")).await
     }
 
     fn begin(

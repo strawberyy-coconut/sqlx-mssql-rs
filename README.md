@@ -154,15 +154,11 @@ when a valid binding is not the type the server inferred:
 sqlx_mssql_rs::query!("SELECT id FROM users WHERE amount > ?", amount as f64);
 ```
 
-The generated query-builder and type-checking types are deeply nested, so a
-crate that uses the query builders or these macros may need to raise the
-compiler's limit:
-
-```rust
-#![recursion_limit = "512"]
-```
-
-If the compiler reports "queries overflow the depth limit", this is the fix.
+The driver type-erases the futures it creates internally, so using the query
+builders or these macros does not push a dependent crate past the compiler's
+default recursion limit. If the compiler reports "queries overflow the depth
+limit" while pinned to an older release, `#![recursion_limit = "512"]` is the
+fix there.
 
 ## Features
 

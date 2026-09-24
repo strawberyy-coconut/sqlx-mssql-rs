@@ -12,9 +12,6 @@
 //! describe the query against the live server. Set `SQLX_OFFLINE=true` and run
 //! `cargo sqlx prepare` to compile without a database.
 
-// The generated query builder types are deeply nested.
-#![recursion_limit = "512"]
-
 use chrono::{DateTime, Utc};
 use sqlx_core::row::Row as _;
 use sqlx_mssql_rs::{FromRow, MssqlPoolOptions, MssqlRow};
