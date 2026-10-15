@@ -8,3 +8,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 #cargo install --path sqlx-mssql-rs-cli/
+
+
+RUN printf 'export PATH="${CARGO_HOME:-/usr/local/cargo}/bin:$PATH"\n' \
+    > /etc/profile.d/rust.sh
