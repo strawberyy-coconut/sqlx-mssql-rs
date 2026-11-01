@@ -9,6 +9,7 @@ keywords = ["sqlx", "mssql", "sql-server", "tds", "database"]
 categories = ["database"]
 rust-version = "1.96"
 documentation = "https://docs.rs/sqlx-mssql-rs"
+repository = "https://github.com/strawberyy-coconut/sqlx-mssql-rs"
 
 [package.metadata.docs.rs]
 all-features = true

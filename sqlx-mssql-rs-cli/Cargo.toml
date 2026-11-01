@@ -8,6 +8,7 @@ readme = "../README.md"
 keywords = ["sqlx", "mssql", "tds", "database", "cli"]
 categories = ["database", "command-line-utilities"]
 rust-version = "1.96"
+repository = "https://github.com/strawberyy-coconut/sqlx-mssql-rs"
 
 [[bin]]
 name = "cargo-sqlx-mssql"

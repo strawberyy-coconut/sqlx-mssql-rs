@@ -8,6 +8,7 @@ readme = "README.md"
 keywords = ["sqlx", "mssql", "sql-server", "tds", "database"]
 categories = ["database"]
 rust-version = "1.96"
+repository = "https://github.com/strawberyy-coconut/sqlx-mssql-rs"
 documentation = "https://docs.rs/sqlx-mssql-rs"
 
 [package.metadata.docs.rs]
