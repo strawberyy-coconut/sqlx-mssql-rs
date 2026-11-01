@@ -459,6 +459,55 @@ mod tests {
     }
 
     #[test]
+    fn percent_escapes_round_trip_reserved_characters_in_the_password() {
+        for (encoded, expected) in [
+            ("p%40ss", "p@ss"),
+            ("p%23ss", "p#ss"),
+            ("p%2Fss", "p/ss"),
+            ("p%3Fss", "p?ss"),
+            ("p%40ss%23word", "p@ss#word"),
+            ("100%25", "100%"),
+        ] {
+            let url = format!("mssql://sa:{encoded}@localhost/master");
+            let options: MssqlConnectOptions = url.parse().expect("URL should parse");
+
+            assert_eq!(options.password, expected, "{url}");
+        }
+    }
+
+    #[test]
+    fn unencoded_at_sign_and_colon_survive_in_the_password() {
+        // The `@` that delimits the userinfo is the last one, so an earlier
+        // literal `@` stays part of the password; only the first `:` splits
+        // the username from the password.
+        let options: MssqlConnectOptions = "mssql://sa:p@ss@localhost/master"
+            .parse()
+            .expect("URL should parse");
+        assert_eq!(options.password, "p@ss");
+
+        let options: MssqlConnectOptions = "mssql://sa:pa:ss@localhost/master"
+            .parse()
+            .expect("URL should parse");
+        assert_eq!(options.password, "pa:ss");
+    }
+
+    #[test]
+    fn unencoded_reserved_characters_break_the_password() {
+        // `#`, `/` and `?` are structural once the URL is parsed and must be
+        // percent-encoded to appear inside a password.
+        for url in [
+            "mssql://sa:p#ss@localhost/master",
+            "mssql://sa:p/ss@localhost/master",
+            "mssql://sa:p?ss@localhost/master",
+        ] {
+            assert!(
+                url.parse::<MssqlConnectOptions>().is_err(),
+                "{url} should not parse"
+            );
+        }
+    }
+
+    #[test]
     fn debug_does_not_leak_the_password() {
         let options: MssqlConnectOptions = "mssql://sa:supersecret@localhost/master"
             .parse()
