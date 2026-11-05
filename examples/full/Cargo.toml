@@ -1,12 +1,12 @@
 [package]
 name = "full"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # Example crate: never publish it (the `full` name is already taken on crates.io).
 publish = false
 
 [dependencies]
-sqlx-mssql-rs = { path = "../..", version = "0.1.0", features = [
+sqlx-mssql-rs = { path = "../..", version = "0.1.1", features = [
     "macros",
     "derive",
     "offline",

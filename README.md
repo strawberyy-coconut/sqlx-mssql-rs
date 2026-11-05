@@ -9,14 +9,14 @@ to install, and no background thread bridging to a blocking API: the underlying
 client is fully asynchronous, so the driver is Tokio-only and adds nothing but
 crates.io dependencies.
 
-> **Status:** published on crates.io as version `0.1.0`. The git dependency form
+> **Status:** published on crates.io as version `0.1.1`. The git dependency form
 > below also works for tracking unreleased changes.
 
 ## Minimal Query
 
 ```toml
 [dependencies]
-sqlx-mssql-rs = "0.1.0"
+sqlx-mssql-rs = "0.1.1"
 sqlx-core = { version = "0.9.0", default-features = false }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
