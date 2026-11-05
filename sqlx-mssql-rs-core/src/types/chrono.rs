@@ -91,15 +91,7 @@ impl Type<Mssql> for NaiveDate {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        matches!(
-            ty.data_type(),
-            Some(
-                mssql_tds::datatypes::sqldatatypes::TdsDataType::DateN
-                    | mssql_tds::datatypes::sqldatatypes::TdsDataType::DateTime2N
-                    | mssql_tds::datatypes::sqldatatypes::TdsDataType::DateTime
-                    | mssql_tds::datatypes::sqldatatypes::TdsDataType::DateTim4
-            )
-        ) || ty.accepts_datetime_data()
+        ty.accepts_date_data()
     }
 }
 
@@ -141,7 +133,7 @@ impl Type<Mssql> for NaiveTime {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_time_data()
     }
 }
 
@@ -184,7 +176,7 @@ impl Type<Mssql> for NaiveDateTime {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_naive_datetime_data()
     }
 }
 
@@ -222,7 +214,7 @@ impl Type<Mssql> for DateTime<Utc> {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_naive_datetime_data() || ty.accepts_datetimeoffset_data()
     }
 }
 
@@ -273,4 +265,94 @@ impl<'r> Decode<'r, Mssql> for DateTime<Utc> {
 #[allow(dead_code)]
 fn _assert_traits_used(date: NaiveDate, time: NaiveTime) -> (i32, u32, u32) {
     (date.year(), time.hour(), time.nanosecond())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mssql_tds::datatypes::sqldatatypes::TdsDataType;
+
+    /// The query macros fall back to the first `compatible` entry when there is
+    /// no exact match. If a Rust type claims every date/time SQL type, it can
+    /// steal a column from the type that actually owns it.
+    #[test]
+    fn date_time_types_only_claim_their_own_kind() {
+        let date = MssqlTypeInfo::date();
+        let time = MssqlTypeInfo::time();
+        let datetime2 = MssqlTypeInfo::datetime2();
+        let datetimeoffset = MssqlTypeInfo::datetimeoffset();
+        let datetime = MssqlTypeInfo::new(
+            "datetime",
+            TdsDataType::DateTime as u8,
+            8,
+            None,
+            None,
+        );
+
+        assert!(<NaiveDate as Type<Mssql>>::compatible(&date));
+        assert!(!<NaiveDate as Type<Mssql>>::compatible(&time));
+        assert!(!<NaiveDate as Type<Mssql>>::compatible(&datetime2));
+        assert!(!<NaiveDate as Type<Mssql>>::compatible(&datetimeoffset));
+
+        assert!(<NaiveTime as Type<Mssql>>::compatible(&time));
+        assert!(!<NaiveTime as Type<Mssql>>::compatible(&date));
+        assert!(!<NaiveTime as Type<Mssql>>::compatible(&datetime2));
+        assert!(!<NaiveTime as Type<Mssql>>::compatible(&datetimeoffset));
+
+        assert!(<NaiveDateTime as Type<Mssql>>::compatible(&datetime2));
+        assert!(<NaiveDateTime as Type<Mssql>>::compatible(&datetime));
+        assert!(!<NaiveDateTime as Type<Mssql>>::compatible(&date));
+        assert!(!<NaiveDateTime as Type<Mssql>>::compatible(&time));
+        assert!(!<NaiveDateTime as Type<Mssql>>::compatible(&datetimeoffset));
+
+        assert!(<DateTime<Utc> as Type<Mssql>>::compatible(&datetimeoffset));
+        assert!(<DateTime<Utc> as Type<Mssql>>::compatible(&datetime2));
+        assert!(!<DateTime<Utc> as Type<Mssql>>::compatible(&date));
+        assert!(!<DateTime<Utc> as Type<Mssql>>::compatible(&time));
+    }
+
+    /// Regression test for introspected date/time columns. The described type
+    /// carries a scale that the constructors do not, and it used to fall
+    /// through to `NaiveDate` for `time`, `datetime2` and `datetimeoffset`.
+    #[cfg(not(feature = "jiff"))]
+    #[test]
+    fn described_date_time_types_map_to_the_matching_chrono_type() {
+        use sqlx_core::config::macros::{DateTimeCrate, PreferredCrates};
+        use sqlx_core::type_checking::TypeChecking;
+
+        let preferred = PreferredCrates {
+            date_time: DateTimeCrate::Chrono,
+            ..Default::default()
+        };
+
+        let described = |name, data_type, length, precision, scale| {
+            MssqlTypeInfo::new(name, data_type as u8, length, Some(precision), Some(scale))
+        };
+        let mapping = |info| {
+            <Mssql as TypeChecking>::return_type_for_id(&info, &preferred).unwrap()
+        };
+
+        assert_eq!(
+            mapping(described("time", TdsDataType::TimeN, 5, 16, 7)),
+            "sqlx::types::chrono::NaiveTime"
+        );
+        assert_eq!(
+            mapping(described("datetime2", TdsDataType::DateTime2N, 8, 27, 7)),
+            "sqlx::types::chrono::NaiveDateTime"
+        );
+        assert_eq!(
+            mapping(described(
+                "datetimeoffset",
+                TdsDataType::DateTimeOffsetN,
+                10,
+                34,
+                7
+            )),
+            "sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>"
+        );
+        assert_eq!(
+            mapping(described("date", TdsDataType::DateN, 3, 10, 0)),
+            "sqlx::types::chrono::NaiveDate"
+        );
+    }
 }

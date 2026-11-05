@@ -151,7 +151,7 @@ impl Type<Mssql> for Date {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_date_data()
     }
 }
 
@@ -188,7 +188,7 @@ impl Type<Mssql> for Time {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_time_data()
     }
 }
 
@@ -226,7 +226,7 @@ impl Type<Mssql> for DateTime {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_naive_datetime_data()
     }
 }
 
@@ -260,7 +260,7 @@ impl Type<Mssql> for Timestamp {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_naive_datetime_data() || ty.accepts_datetimeoffset_data()
     }
 }
 

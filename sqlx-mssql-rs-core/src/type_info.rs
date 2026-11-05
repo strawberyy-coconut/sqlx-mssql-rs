@@ -8,7 +8,7 @@ use mssql_tds::query::metadata::ColumnMetadata;
 /// This is a driver-owned description of a column's SQL Server type rather than
 /// a borrowed TDS descriptor, so it can be cached, compared and serialized for
 /// offline query metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "offline", derive(serde::Serialize, serde::Deserialize))]
 pub struct MssqlTypeInfo {
     type_name: String,
@@ -17,6 +17,23 @@ pub struct MssqlTypeInfo {
     precision: Option<u8>,
     scale: Option<u8>,
 }
+
+impl PartialEq for MssqlTypeInfo {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare the SQL type identity, not the metadata that accompanies it.
+        // A constructed type leaves length/precision/scale unset while
+        // `sp_describe_first_result_set` fills them in, so comparing those
+        // fields would make an introspected `datetimeoffset` fail to equal
+        // [`Self::datetimeoffset`] and fall through to an unrelated Rust type.
+        // The name is part of the identity only for CLR UDTs, where it is the
+        // only thing that tells `geometry` and `geography` apart.
+        self.sql_data_type == other.sql_data_type
+            && (self.sql_data_type != TdsDataType::Udt as u8
+                || self.type_name.eq_ignore_ascii_case(&other.type_name))
+    }
+}
+
+impl Eq for MssqlTypeInfo {}
 
 impl MssqlTypeInfo {
     /// Creates type information from its parts.
@@ -95,10 +112,10 @@ impl MssqlTypeInfo {
     /// when the type actually carries them.
     ///
     /// `sp_describe_first_result_set` fills both for every numeric type, but the
-    /// constructors only carry them where they are meaningful. A described
-    /// integer, for example, would otherwise not compare equal to
-    /// [`Self::bigint`] and the query macros would fall back to the first
-    /// `compatible` entry.
+    /// constructors only carry them where they are meaningful. Keeping the
+    /// reported values for the types that own them preserves the full metadata
+    /// of a described column; equality itself is based on the SQL type identity
+    /// (see [`PartialEq`] for `MssqlTypeInfo`).
     pub(crate) fn with_precision_scale(
         mut self,
         precision: Option<u8>,
@@ -203,6 +220,37 @@ impl MssqlTypeInfo {
                     | TdsDataType::DateTimeN
             )
         )
+    }
+
+    /// Whether values of this type are calendar dates without a time of day.
+    pub fn accepts_date_data(&self) -> bool {
+        self.data_type() == Some(TdsDataType::DateN)
+    }
+
+    /// Whether values of this type are times of day without a date.
+    pub fn accepts_time_data(&self) -> bool {
+        self.data_type() == Some(TdsDataType::TimeN)
+    }
+
+    /// Whether values of this type are date/time values without a UTC offset.
+    ///
+    /// This covers `datetime2`, `datetime` and `smalldatetime`; their nullable
+    /// wire variants are included as well.
+    pub fn accepts_naive_datetime_data(&self) -> bool {
+        matches!(
+            self.data_type(),
+            Some(
+                TdsDataType::DateTime2N
+                    | TdsDataType::DateTime
+                    | TdsDataType::DateTim4
+                    | TdsDataType::DateTimeN
+            )
+        )
+    }
+
+    /// Whether values of this type are date/time values carrying a UTC offset.
+    pub fn accepts_datetimeoffset_data(&self) -> bool {
+        self.data_type() == Some(TdsDataType::DateTimeOffsetN)
     }
 
     /// Whether values of this type are boolean.
@@ -337,11 +385,11 @@ impl MssqlTypeInfo {
             return true;
         }
 
-        // Date/time types have no exact match and are resolved by the
-        // feature-gated `datetime-types` section, so they can only be reported
-        // when that section was compiled in.
+        // Date/time types are resolved by the `jiff` entries in the main list
+        // and the feature-gated `datetime-types` section, so they can only be
+        // reported when one of those was compiled in.
         if self.accepts_datetime_data() {
-            return cfg!(any(feature = "chrono", feature = "time"));
+            return cfg!(any(feature = "chrono", feature = "time", feature = "jiff"));
         }
 
         match self.data_type() {
@@ -373,8 +421,8 @@ impl MssqlTypeInfo {
 /// not model, so the caller can fall back to reporting a parameter count.
 ///
 /// The numeric types are normalized to the same values their constructors
-/// produce, because [`MssqlTypeInfo`] compares every field and an exact match is
-/// what makes the Rust mapping unambiguous.
+/// produce, because an exact match against the type's constructor is what makes
+/// the Rust mapping unambiguous.
 pub(crate) fn from_system_type_name(system_type_name: &str) -> Option<MssqlTypeInfo> {
     let trimmed = system_type_name.trim();
 
@@ -596,6 +644,41 @@ mod tests {
     }
 
     #[test]
+    fn equality_uses_the_sql_type_identity_not_its_metadata() {
+        // `sp_describe_first_result_set` reports a scale for date/time types
+        // that the constructors leave unset. The described type still has to
+        // compare equal, or the query macros fall through to an unrelated
+        // `compatible` mapping such as `NaiveDate`.
+        let described = MssqlTypeInfo::new(
+            "datetimeoffset",
+            TdsDataType::DateTimeOffsetN as u8,
+            10,
+            Some(34),
+            Some(7),
+        );
+
+        assert_eq!(described, MssqlTypeInfo::datetimeoffset());
+        assert_ne!(described, MssqlTypeInfo::datetime2());
+
+        // Length and precision are metadata too: the same SQL type with a
+        // different declaration is still the same type.
+        let nvarchar = |length| {
+            MssqlTypeInfo::new("nvarchar", TdsDataType::NVarChar as u8, length, None, None)
+        };
+        assert_eq!(nvarchar(100), nvarchar(200));
+    }
+
+    #[test]
+    fn equality_distinguishes_udts_by_name() {
+        // `geometry` and `geography` share the UDT identifier, so their name is
+        // the only part of the identity that separates them.
+        let geometry = MssqlTypeInfo::new("GEOMETRY", TdsDataType::Udt as u8, 0, None, None);
+
+        assert_eq!(geometry, MssqlTypeInfo::geometry());
+        assert_ne!(geometry, MssqlTypeInfo::geography());
+    }
+
+    #[test]
     fn reports_declared_lengths_in_bytes() {
         // Unicode types are two bytes per character, and `max` is reported as
         // the maximum length rather than as zero.
@@ -673,7 +756,7 @@ mod tests {
         );
         assert_eq!(
             MssqlTypeInfo::datetime2().has_exact_rust_mapping(),
-            cfg!(any(feature = "chrono", feature = "time"))
+            cfg!(any(feature = "chrono", feature = "time", feature = "jiff"))
         );
     }
 }

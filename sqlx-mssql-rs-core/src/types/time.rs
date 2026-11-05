@@ -79,7 +79,7 @@ impl Type<Mssql> for Date {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_date_data()
     }
 }
 
@@ -115,7 +115,7 @@ impl Type<Mssql> for Time {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_time_data()
     }
 }
 
@@ -155,7 +155,7 @@ impl Type<Mssql> for PrimitiveDateTime {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_naive_datetime_data()
     }
 }
 
@@ -190,7 +190,7 @@ impl Type<Mssql> for OffsetDateTime {
     }
 
     fn compatible(ty: &MssqlTypeInfo) -> bool {
-        ty.accepts_datetime_data()
+        ty.accepts_naive_datetime_data() || ty.accepts_datetimeoffset_data()
     }
 }
 
@@ -230,5 +230,89 @@ impl<'r> Decode<'r, Mssql> for OffsetDateTime {
                 .ok_or_else(|| "DATETIME2 value is out of range for time::OffsetDateTime".into()),
             other => Err(format!("cannot decode {other:?} into time::OffsetDateTime").into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mssql_tds::datatypes::sqldatatypes::TdsDataType;
+
+    #[test]
+    fn date_time_types_only_claim_their_own_kind() {
+        let date = MssqlTypeInfo::date();
+        let time = MssqlTypeInfo::time();
+        let datetime2 = MssqlTypeInfo::datetime2();
+        let datetimeoffset = MssqlTypeInfo::datetimeoffset();
+        let datetime = MssqlTypeInfo::new(
+            "datetime",
+            TdsDataType::DateTime as u8,
+            8,
+            None,
+            None,
+        );
+
+        assert!(<Date as Type<Mssql>>::compatible(&date));
+        assert!(!<Date as Type<Mssql>>::compatible(&time));
+        assert!(!<Date as Type<Mssql>>::compatible(&datetime2));
+        assert!(!<Date as Type<Mssql>>::compatible(&datetimeoffset));
+
+        assert!(<Time as Type<Mssql>>::compatible(&time));
+        assert!(!<Time as Type<Mssql>>::compatible(&date));
+        assert!(!<Time as Type<Mssql>>::compatible(&datetime2));
+        assert!(!<Time as Type<Mssql>>::compatible(&datetimeoffset));
+
+        assert!(<PrimitiveDateTime as Type<Mssql>>::compatible(&datetime2));
+        assert!(<PrimitiveDateTime as Type<Mssql>>::compatible(&datetime));
+        assert!(!<PrimitiveDateTime as Type<Mssql>>::compatible(&date));
+        assert!(!<PrimitiveDateTime as Type<Mssql>>::compatible(&time));
+        assert!(!<PrimitiveDateTime as Type<Mssql>>::compatible(&datetimeoffset));
+
+        assert!(<OffsetDateTime as Type<Mssql>>::compatible(&datetimeoffset));
+        assert!(<OffsetDateTime as Type<Mssql>>::compatible(&datetime2));
+        assert!(!<OffsetDateTime as Type<Mssql>>::compatible(&date));
+        assert!(!<OffsetDateTime as Type<Mssql>>::compatible(&time));
+    }
+
+    #[cfg(not(feature = "jiff"))]
+    #[test]
+    fn described_date_time_types_map_to_the_matching_time_type() {
+        use sqlx_core::config::macros::{DateTimeCrate, PreferredCrates};
+        use sqlx_core::type_checking::TypeChecking;
+
+        let preferred = PreferredCrates {
+            date_time: DateTimeCrate::Time,
+            ..Default::default()
+        };
+
+        let described = |name, data_type, length, precision, scale| {
+            MssqlTypeInfo::new(name, data_type as u8, length, Some(precision), Some(scale))
+        };
+        let mapping = |info| {
+            <Mssql as TypeChecking>::return_type_for_id(&info, &preferred).unwrap()
+        };
+
+        assert_eq!(
+            mapping(described("time", TdsDataType::TimeN, 5, 16, 7)),
+            "sqlx::types::time::Time"
+        );
+        assert_eq!(
+            mapping(described("datetime2", TdsDataType::DateTime2N, 8, 27, 7)),
+            "sqlx::types::time::PrimitiveDateTime"
+        );
+        assert_eq!(
+            mapping(described(
+                "datetimeoffset",
+                TdsDataType::DateTimeOffsetN,
+                10,
+                34,
+                7
+            )),
+            "sqlx::types::time::OffsetDateTime"
+        );
+        assert_eq!(
+            mapping(described("date", TdsDataType::DateN, 3, 10, 0)),
+            "sqlx::types::time::Date"
+        );
     }
 }
