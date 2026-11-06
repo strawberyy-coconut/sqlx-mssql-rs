@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -59,16 +60,18 @@ impl MssqlConnection {
 
         // `mssql-tds`'s client-creation future is deeply nested. Awaiting it
         // unboxed splices that type into this opaque future, where it counts
-        // against the recursion limit of every crate that connects. Boxing
-        // type-erases it, keeping callers well inside the default.
-        let client = Box::pin(TdsConnectionProvider.create_client(context, &datasource, None))
-            .await
-            .map_err(|error| {
-                sqlx_core::Error::from(database_error_with_context(
-                    error,
-                    format!("failed to connect to SQL Server at {datasource}"),
-                ))
-            })?;
+        // against the recursion limit of every crate that connects. Coerce it
+        // to a trait object so the concrete type is erased, not just moved to
+        // the heap.
+        let connect: Pin<
+            Box<dyn Future<Output = mssql_tds::core::TdsResult<TdsClient>> + Send + '_>,
+        > = Box::pin(TdsConnectionProvider.create_client(context, &datasource, None));
+        let client = connect.await.map_err(|error| {
+            sqlx_core::Error::from(database_error_with_context(
+                error,
+                format!("failed to connect to SQL Server at {datasource}"),
+            ))
+        })?;
 
         Ok(Self {
             client: Box::new(client),
@@ -777,9 +780,12 @@ impl Connection for MssqlConnection {
         let MssqlConnection { client, .. } = self;
         let mut client = client;
 
-        // Boxed for the same reason as `connect_with`: the close chain is deep
-        // and the pool closes connections when it releases them.
-        Box::pin(client.close_connection()).await.map_err(|error| {
+        // Coerced to a trait object for the same reason as `connect_with`: the
+        // close chain is deep and the pool closes connections when it releases
+        // them.
+        let close: Pin<Box<dyn Future<Output = mssql_tds::core::TdsResult<()>> + Send + '_>> =
+            Box::pin(client.close_connection());
+        close.await.map_err(|error| {
             sqlx_core::Error::from(database_error_with_context(
                 error,
                 "failed to close the connection",
@@ -794,8 +800,12 @@ impl Connection for MssqlConnection {
 
     async fn ping(&mut self) -> Result<(), sqlx_core::Error> {
         // `execute_simple` is deep and `Pool::acquire` pings on every checkout,
-        // so this chain otherwise reaches more callers than any other.
-        Box::pin(self.execute_simple("SELECT 1")).await
+        // so this chain otherwise reaches more callers than any other. Coerce
+        // to a trait object so the concrete future type is erased rather than
+        // just moved to the heap.
+        let ping: Pin<Box<dyn Future<Output = Result<(), sqlx_core::Error>> + Send + '_>> =
+            Box::pin(self.execute_simple("SELECT 1"));
+        ping.await
     }
 
     fn begin(

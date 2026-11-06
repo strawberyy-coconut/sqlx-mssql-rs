@@ -1,3 +1,6 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use crate::{Mssql, MssqlConnection};
 
 /// Transaction manager for MSSQL.
@@ -10,17 +13,23 @@ impl sqlx_core::transaction::TransactionManager for MssqlTransactionManager {
         conn: &mut MssqlConnection,
         _statement: Option<sqlx_core::sql_str::SqlStr>,
     ) -> Result<(), sqlx_core::Error> {
-        // Boxed so the driver's internal future chain is erased from the
-        // opaque future the pool stores for each transaction.
-        Box::pin(conn.begin_transaction()).await
+        // Coerced to a trait object so the driver's internal future chain is
+        // erased from the opaque future the pool stores for each transaction.
+        let begin: Pin<Box<dyn Future<Output = Result<(), sqlx_core::Error>> + Send + '_>> =
+            Box::pin(conn.begin_transaction());
+        begin.await
     }
 
     async fn commit(conn: &mut MssqlConnection) -> Result<(), sqlx_core::Error> {
-        Box::pin(conn.commit_transaction()).await
+        let commit: Pin<Box<dyn Future<Output = Result<(), sqlx_core::Error>> + Send + '_>> =
+            Box::pin(conn.commit_transaction());
+        commit.await
     }
 
     async fn rollback(conn: &mut MssqlConnection) -> Result<(), sqlx_core::Error> {
-        Box::pin(conn.rollback_transaction()).await
+        let rollback: Pin<Box<dyn Future<Output = Result<(), sqlx_core::Error>> + Send + '_>> =
+            Box::pin(conn.rollback_transaction());
+        rollback.await
     }
 
     fn start_rollback(conn: &mut MssqlConnection) {
