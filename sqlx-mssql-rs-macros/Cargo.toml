@@ -1,6 +1,6 @@
 [package]
 name = "sqlx-mssql-rs-macros"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "Proc macro support for sqlx-mssql-rs."
@@ -39,7 +39,7 @@ uuid = ["sqlx-mssql-rs-core/uuid", "sqlx-macros-core/uuid"]
 
 [dependencies]
 sqlx-macros-core = { version = "0.9.0", default-features = false }
-sqlx-mssql-rs-core = { version = "0.1.1", path = "../sqlx-mssql-rs-core", features = ["offline"] }
+sqlx-mssql-rs-core = { version = "0.1.2", path = "../sqlx-mssql-rs-core", features = ["offline"] }
 proc-macro2 = "1.0.76"
 syn = { version = "2.0.58", features = ["full"] }
 quote = "1.0.35"

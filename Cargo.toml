@@ -1,6 +1,6 @@
 [package]
 name = "sqlx-mssql-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "MSSQL driver for SQLx built on Microsoft's mssql-tds TDS implementation."
@@ -51,8 +51,8 @@ derive = ["sqlx-mssql-rs-macros/derive"]
 
 [dependencies]
 sqlx-core = { version = "0.9.0", default-features = false }
-sqlx-mssql-rs-core = { version = "0.1.1", path = "./sqlx-mssql-rs-core", default-features = false }
-sqlx-mssql-rs-macros = { version = "0.1.1", path = "./sqlx-mssql-rs-macros", optional = true }
+sqlx-mssql-rs-core = { version = "0.1.2", path = "./sqlx-mssql-rs-core", default-features = false }
+sqlx-mssql-rs-macros = { version = "0.1.2", path = "./sqlx-mssql-rs-macros", optional = true }
 
 [dev-dependencies]
 chrono = { version = "0.4.34", default-features = false, features = ["std", "clock"] }
